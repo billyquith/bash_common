@@ -42,6 +42,4 @@ fi
 source $BIN_SHARED/completion/brew.completion.bash
 source $BIN_SHARED/completion/git.completion.bash
 
-source $BIN_SHARED/git-subrepo/.rc
-
 export PS1="$(clr_escape '\w>' '36') "
