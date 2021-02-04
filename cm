@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# cmake helper
+#	- create and update cmake projects
+
+BUILD_DIR=build
+WD=$(pwd)
+CMARGS="$@"
+POST=
+
+# check where we are is valid
+if [ -f ./CMakeCache.txt ]; then
+	BUILD_DIR=$(basename `pwd`)
+	cd ..
+else
+    if [ ! -f ./CMakeLists.txt ]; then
+        echo "No CMakeLists.txt. Are you in a cmake project?"
+        exit 1
+    fi
+	[ -d $BUILD_DIR ] || (mkdir $BUILD_DIR)
+fi
+
+echo "Build dir: $BUILD_DIR"
+
+if [ "$1" = "-r" ]; then
+	echo "Reseting build dir..."
+	rm -r $BUILD_DIR/*
+	shift
+	CMARGS="$@"
+fi
+
+if [ "$1" = "-o" ]; then
+	POST=open_project
+	shift
+	CMARGS="$@"
+fi
+
+function open_project {
+	if [ -f Makefile ]; then
+		open Makefile
+	elif [ -d *.xcodeproj ]; then
+		open "$(ls -d *.xcodeproj)"
+	fi
+}
+
+cd $BUILD_DIR
+pwd
+cmake "$CMARGS" ..
+$POST
+cd $WD

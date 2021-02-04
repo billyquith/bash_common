@@ -1,0 +1,21 @@
+#!/bin/sh
+
+## A little script to make it easier to launch DiffMerge from the command line.
+## Version 4.2.1.1013
+## Copyright (C) 2003-2015 SourceGear LLC. All Rights Reserved.
+
+DIFFMERGE_PATH=/Applications/DiffMerge.app
+
+if [ ! -d $DIFFMERGE_PATH ]; then
+    echo 'Please install DiffMerge: https://sourcegear.com/diffmerge/downloads.php'
+    exit 1
+fi
+
+# The actual executable is hidden inside the .app bundle.
+DIFFMERGE_EXE=${DIFFMERGE_PATH}/Contents/MacOS/DiffMerge
+
+# Launch DiffMerge using the given command line arguments.  Use --help 
+exec ${DIFFMERGE_EXE} --nosplash "$@"
+
+
+

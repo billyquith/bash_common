@@ -1,0 +1,22 @@
+#! /usr/bin/env bash
+
+# cmake.sh <build dir> <code gen>
+# cmake.sh build Ninja
+
+DIR=$1
+GEN=$2
+
+if [ -z $DIR ]; then
+    echo "$(basename $0) <build dir> <code gen>"
+    exit 0
+fi
+
+if [ -d $DIR ]; then
+    echo "Directory exists"
+    exit 1
+fi
+
+mkdir $DIR
+pushd $DIR
+cmake -G $GEN ..
+popd

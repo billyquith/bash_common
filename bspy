@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+
+echo 'Default system python'
+python -V
+
+# install python requirements
+pip install markdown2
+
+pip list

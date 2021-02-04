@@ -1,0 +1,34 @@
+#!/bin/bash
+
+source $HOME/.sdirs
+
+BLEND="$DIR_blender"
+CONFIG="$DIR_blconfig"
+
+if [ -z "$BLEND" ]; then
+    echo 'Please set DIR_blender using bookmarks'
+    exit 1
+fi
+
+if [ ! -d "$BLEND/MacOS" ]; then
+    echo 'DIR_blender needs to point to Contents of Blender app'
+    exit 1
+fi
+
+if [ -z "$CONFIG" ]; then
+    echo 'Please set DIR_blconfig using bookmarks: ~/Library/Application Support/Blender/X.YY'
+    exit 1
+fi
+
+if [ ! -d "$CONFIG/config" ]; then
+    echo 'DIR_blconfig needs to point to Blender config dir'
+    exit 1
+fi
+
+# Put Gameplay tools in the path
+if [ ! -z "$DIR_gameplay" ]; then
+    export PATH="$PATH:$DIR_gameplay/bin/macosx"
+fi
+
+EXE="$BLEND/MacOS/blender"
+exec "$EXE" "$@"

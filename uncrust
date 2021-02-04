@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+if [ ! -n "$1" ]; then
+    echo "Syntax is: uncrust dirname filesuffix"
+    echo "Syntax is: uncrust filename"
+    echo "Example: recurse.sh temp cpp"
+    exit 1
+fi
+
+SCRIPTPATH=$(cd $(dirname $0) ; pwd -P)
+WHAT=$1
+UNCRUST=uncrustify
+CFG=$SCRIPTPATH/source_code/allman.uncrust.cfg
+TMPFILES=$(mktemp)
+
+function reformat #(filename)
+{
+    echo "Indenting file $1"
+    $UNCRUST -f "$1" -l cpp -c $CFG -o indentoutput.tmp
+    mv indentoutput.tmp "$1"
+}
+
+function reformatlist #(filelist)
+{
+    echo "Indenting file $1"
+    $UNCRUST -F "$1" -l cpp -c $CFG --replace --no-backup
+}
+
+function fmttree #(dir,file_ext)
+{
+    find $1 -name "*.$2" -type f > $TMPFILES
+    reformatlist $TMPFILES
+}
+
+if [ -d "$WHAT" ]; then
+    fmttree $WHAT h
+    fmttree $WHAT hpp
+    fmttree $WHAT inl
+    fmttree $WHAT cpp
+else
+    if [ -f "$WHAT" ]; then
+        reformat "$WHAT"
+    else
+        echo "ERROR: As parameter given directory or file does not exist!"
+        echo "Syntax is: call_Uncrustify.sh dirname filesuffix"
+        echo "Syntax is: call_Uncrustify.sh filename"
+        echo "Example: call_Uncrustify.sh temp cpp"
+        exit 1
+    fi
+fi

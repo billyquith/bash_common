@@ -1,0 +1,289 @@
+#!/usr/bin/env python
+
+import argparse
+import subprocess
+import logging
+import json
+from io import BytesIO
+from struct import pack, unpack
+from time import gmtime, strftime
+from collections import defaultdict
+
+# Logger setup
+log = logging.getLogger(__name__)
+log.setLevel(logging.WARNING)
+
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+
+log.addHandler(handler)
+
+
+def flag_type(raw_flag):
+	'''Solve cookie flags'''
+	types = {0: None, 1: 'secure', 4: 'http only', 5: 'Secure, http only'}
+	return types[raw_flag]
+
+
+def date(raw_date):
+	'''Mac epoch to date string'''
+	return strftime("%a, %d %b %Y ", gmtime(raw_date + 978307200))[:-1]
+
+
+def save(file, cookies):
+	'''Write a list of cookies into a binary file'''
+	file.seek(0, 0)
+	file.truncate()
+
+	# File Magic String: cook
+	file.write(b'cook')
+
+	# Divide cookies into pages
+	pages = defaultdict(list)
+
+	for cookie in cookies:
+		pages[cookie['domain']].append(cookie)
+
+	log.debug('Domains: %s', ', '.join(pages.keys()))
+	log.debug('Cookies: %d', len(cookies))
+
+	# Number of pages
+	# There is a page for each domain
+	file.write(pack('>i', len(pages)))
+
+	log.info('Writing %d pages', len(pages))
+
+	# Write page sizes
+	# 4byte offset each cookie + cookies size + fixed header size
+	for i, page in enumerate(pages.values()):
+		cookies_size = sum([cookie['size'] for cookie in page])
+		offsets_size = 4 * len(page)
+		file.write(pack('>i', cookies_size + offsets_size + 12))
+
+		log.debug('Page: %i size: %iB', i, cookies_size + offsets_size + 12)
+
+	for i, page in enumerate(pages.values()):
+		log.info('Writing page %d...', i + 1)
+
+		# Write page header/offsets
+		# Page header
+		file.write(pack('>i', 0x00000100))
+
+		log.debug('cookies: %d', len(page))
+
+		# Number of cookies little-endian from here on
+		file.write(pack('<i', len(page)))
+
+		# Cookie offsets
+		# Each is header + #cookies + offsets + size or previous ones
+		for k, cookie in enumerate(page):
+			previous_size = sum(i['size'] for i in page[:k])
+			file.write(pack('<i', previous_size + len(page) * 4 + 8))
+
+		log.info('Wrote offsets')
+
+		# Finally write cookies
+		for k, cookie in enumerate(page):
+			log.info('Writing cookie: %d...', k + 1)
+
+			# cookie size
+			file.write(pack('<i', cookie['size']))
+			# unknown
+			file.write(pack('B', 0) * 4)
+			# flags
+			file.write(pack('<i', cookie['flags']))
+			# unknown
+			file.write(pack('B', 0) * 4)
+
+			# Content offsets
+			for key in ['domain', 'name', 'path', 'value']:
+				file.write(pack('<i', cookie[key + '_offset']))
+				log.debug('offset for: %s', key)
+
+			# End of cookie
+			file.write(pack('B', 0) * 8)
+			log.debug('Wrote EOC')
+
+			# Dates
+			file.write(pack('<d', cookie['expiry_date']))
+			file.write(pack('<d', cookie['creation_date']))
+			log.debug('Wrote Dates')
+
+			# Write strings
+			for key in ['domain', 'name', 'path', 'value']:
+				for c in cookie[key]:
+					file.write(pack('<b', ord(c)))
+				# null
+				file.write(pack('B', 0))
+			log.debug('Wrote strings')
+
+		# End of page
+		file.write(pack('B', 0) * 4)
+		log.debug('Wrote EOP')
+
+	# Unknown 8bytes tail
+	file.write(pack('B', 0) * 7 + pack('B', 0x22))
+	log.debug('Wrote tail')
+
+def parse(file):
+	'''
+	Given a binary file return a list of cookies.
+	Each one is dictionary containing values and offsets.
+	'''
+	cookies = []
+
+	log.info('Parsing %s', file.name)
+
+	# File Magic String:cook
+	magic = file.read(4)
+
+	if magic != b'cook':
+		log.exception('File is not a binary cookie valid format')
+		return cookies
+
+	# Number of pages in the binary file: 4 bytes
+	num_pages = unpack('>i', file.read(4))[0]
+
+	# Each page size: 4 bytes * number of pages
+	page_sizes = []
+	for _ in range(num_pages):
+		page_sizes.append(unpack('>i', file.read(4))[0])
+
+	# Grab individual pages and each page will contain >= one cookie
+	pages = []
+	for ps in page_sizes:
+		pages.append(file.read(ps))
+
+	# page header: 4 bytes: Always 00000100.
+	# Number of cookies in each page,
+	# first 4 bytes after the page header in every page.
+	for page in pages:
+		page = BytesIO(page)
+		page.read(4)
+		num_cookies = unpack('<i', page.read(4))[0]
+
+		# Every page contains >= one cookie.
+		# Fetch cookie starting point from page starting byte
+		cookie_offsets = []
+		for _ in range(num_cookies):
+			cookie_offsets.append(unpack('<i', page.read(4))[0])
+
+		# end of page header: Always 00000000
+		page.read(4)
+
+		for offset in cookie_offsets:
+			content = {}
+
+			# Move the page pointer to the cookie starting point
+			# fetch cookie size
+			# read the complete cookie
+			page.seek(offset)
+			content['size'] = unpack('<i', page.read(4))[0]
+			cookie = BytesIO(page.read(content['size']))
+
+			# Unknown 4 null bytes
+			cookie.read(4)
+
+			# Flags
+			content['flags'] = unpack('<i', cookie.read(4))[0]
+
+			# Unknown 4 null bytes
+			cookie.read(4)
+
+			# Offsets
+			for key in ['domain', 'name', 'path', 'value']:
+				content[key + '_offset'] = unpack('<i', cookie.read(4))[0]
+
+			# End of cookie
+			cookie.read(8)
+
+			# Date is in Mac epoch format: starts from 1/Jan/2001
+			content['expiry_date'] = unpack('<d', cookie.read(8))[0]
+			content['creation_date'] = unpack('<d', cookie.read(8))[0]
+
+			# fetch values
+			for i in ['domain', 'name', 'path', 'value']:
+				n = cookie.read(1)
+				value = []
+				while unpack('<b', n)[0] != 0:
+					value.append(n.decode('utf8'))
+					n = cookie.read(1)
+				content[i] = ''.join(value)
+
+			cookies.append(content)
+
+	return cookies
+
+
+def main():
+	parser = argparse.ArgumentParser(description="Safari cookies tool")
+	mode = parser.add_mutually_exclusive_group()
+	mode.add_argument('-d', '--dump',
+					action='store_true',
+					help='Parse and print cookies')
+	mode.add_argument('-b', '--blacklist',
+					type=str, nargs='+', metavar='domain',
+					help='Remove cookies of given domains')
+	mode.add_argument('-w', '--whitelist',
+					type=str, nargs='+', metavar='domain',
+					help='Keep only cookies of given domains')
+	mode.add_argument('-e', '--export', metavar='file',
+						type=argparse.FileType('w'),
+						help='Export cookies in JSON format')
+	parser.add_argument('file', type=argparse.FileType('r+b'),
+						help='Binary cookies file')
+	parser.add_argument('-v', '--verbose',
+						action='count',
+						help='Increase verbosity')
+	args = parser.parse_args()
+
+	if args.verbose == 1:
+		log.setLevel(logging.INFO)
+	elif args.verbose == 2:
+		log.setLevel(logging.DEBUG)
+
+	cookies = parse(args.file)
+
+	if args.dump:
+		log.info('Dumping data...')
+
+		for i in cookies:
+			if args.verbose == 2:
+				for key, value in i.items():
+					print(' {}: {}'.format(key, value))
+				print('')
+			else:
+				print('* domain: {}\n  name: {}'.format(i['domain'], i['name']),
+					'\n  flags: {}\n  created: {}, expires: {}\n'.format(
+													flag_type(i['flags']),
+													date(i['creation_date']),
+													date(i['expiry_date'])))
+	elif args.export:
+		log.info('Exporting data...')
+		json.dump(cookies, args.export)
+		log.info('Wrote %d cookies into: %s', len(cookies), args.export.name)
+
+
+	else:
+		log.info('Filtering data...')
+
+		if args.whitelist:
+			cookies = [i for i in cookies if i['domain'] in args.whitelist]
+
+		elif args.blacklist:
+			cookies = [i for i in cookies if i['domain'] not in args.blacklist]
+
+		log.debug('Killing cookie daemon...')
+		code = subprocess.call('killall cookied'.split())
+		log.debug('Killed with code: %s', code)
+
+		log.info('Writing data...')
+		save(args.file, cookies)
+
+		log.warning('You have to restart Safari to load changes')
+
+	args.file.close()
+
+if __name__ == '__main__':
+	main()
+    

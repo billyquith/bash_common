@@ -1,0 +1,27 @@
+#!/bin/bash
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CFG_STORE="$DIR/config"
+echo $CFG_STORE
+
+QTCREATOR_STYLES="$HOME/.config/QtProject/qtcreator/styles"
+
+
+function cfgdiff # what from to
+{
+  local what=$1
+  local src=$2
+  local store=$3
+  
+  echo "Checking $what"
+  
+  if [ ! -d $store ]; then
+    mkdir -p $store
+  fi
+
+  ls -l $src
+  rsync -avW "$src/" "$store"  
+  ls -l $store
+}
+
+cfgdiff "QtCreator style" "$QTCREATOR_STYLES" "$CFG_STORE/qtcreator/styles"

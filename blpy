@@ -1,0 +1,42 @@
+#!/bin/bash
+
+source $HOME/.sdirs
+
+BLEND="$DIR_blender"
+CONFIG="$DIR_blconfig"
+
+# TODO - refactoring this out as copied in blend
+
+if [ -z "$BLEND" ]; then
+    echo 'Please set DIR_blender using bookmarks'
+    exit 1
+fi
+
+if [ -z "$CONFIG" ]; then
+    echo 'Please set DIR_blconfig using bookmarks: ~/Library/Application Support/Blender/X.YY'
+    exit 1
+fi
+
+PYDIR="$BLEND/Resources/2.77/python"
+PYEXE="$PYDIR/bin/python3.5m"
+BLSCRIPTS="$BLEND/Resources/2.77/scripts"
+
+PYPATH=""
+
+PYPATH="$PYPATH:$CONFIG/scripts/addons_contrib"
+PYPATH="$PYPATH:$BLSCRIPTS/addons_contrib"
+
+PYPATH="$PYPATH:$CONFIG/scripts/addons"
+PYPATH="$PYPATH:$BLSCRIPTS/addons"
+
+PYPATH="$PYPATH:$CONFIG/scripts/modules"
+PYPATH="$PYPATH:$CONFIG/scripts/startup"
+PYPATH="$PYPATH:$BLSCRIPTS/modules"
+PYPATH="$PYPATH:$BLSCRIPTS/startup"
+
+PYPATH="$PYPATH:$BLSCRIPTS/addons/modules"
+PYPATH="$PYPATH:$CONFIG/scripts/addons/modules"
+
+export PYTHONPATH="$PYPATH"
+
+exec "$PYEXE" "$@"

@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+FNAME="$1"
+
+if [ -z "$FNAME" ]; then
+    echo "No name given"
+    exit 1
+fi
+
+if [ -e "$FNAME" ]; then
+    echo "Script already exists"
+    exit 1
+fi
+
+cat << 'EOF' >> "$FNAME"
+#!/usr/bin/env bash
+
+SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
+
+EOF
+
+chmod u+x "$FNAME"

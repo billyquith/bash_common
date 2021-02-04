@@ -1,0 +1,11 @@
+
+* text=auto eol=lf
+
+*.sh	text
+*.txt	text
+*.md	text
+*.py	text
+
+*.jpg	binary
+*.data	binary
+*.bin 	binary

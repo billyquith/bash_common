@@ -1,0 +1,35 @@
+#!/bin/sh
+
+CHLOC="$HOME/Code/gamedev/tools/cheatsheet/"
+
+# -e : edit
+if [ $1 == "-e" ]; then
+  mate $CHLOC
+  exit 0
+fi
+
+SHEET=
+if [ ! -z $1 ]; then
+  
+  if [ "$1" = "-l" ]; then
+    pushd $CHLOC/sheets
+    ls *.md
+    popd
+    exit 0
+  fi
+  
+  if [ ! -e "$CHLOC/sheets/$1.md" ]; then
+    echo "Unknown cheatsheet: $1"
+    exit 1
+  fi
+  
+  SHEET="?sheet=$1";
+fi
+
+URL="file://$CHLOC/index.html${SHEET}"
+
+exec osascript <<EOM
+on run argv
+tell application "Safari" to open location "${URL}"
+end run
+EOM
