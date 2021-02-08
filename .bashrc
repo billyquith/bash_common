@@ -35,6 +35,9 @@ CYGWIN*)
 Darwin)
 	 export EDITOR=mate
 	 ;;
+ *)
+	 export EDITOR=vi
+	 ;;
 esac
 
 source $BS_INSTALL_DIR/bash/colour.sh

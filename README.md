@@ -27,8 +27,14 @@ Add to POSIX `.bash_profile` :-
 [ -f ~/bash_shared/.bashrc ] && source ~/bash_shared/.bashrc
 ```
 
+## Environment
 
-#### .profile/.bashrc purposes
+### Variables
+
+- `EDITOR` : default text/source editor to use.
+- `BS_INSTALL_DIR` : where this lives, bin dir.
+
+### .profile/.bashrc purposes
 
 * `~/.bash_profile` should be super-simple and just load `.profile` and `.bashrc` (in that order).
 
