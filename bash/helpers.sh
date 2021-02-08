@@ -22,17 +22,6 @@ function duh {
     du -sh "$@"
 }
 
-# dtop [0|1]    enable/disable desktop icons
-function dtop {
-    local state="true"
-    local opt=${1:-"0"}
-    if [ $opt -eq 0 ]; then state="false"; fi
-    
-    echo "Show desktop: $state"
-    defaults write com.apple.finder CreateDesktop $state
-    killall Finder    
-}
-
 # print directory hierarchy
 if [ ! -x "$(which tree 2>/dev/null)" ]
 then

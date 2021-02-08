@@ -6,7 +6,7 @@
 # :-    https://www.gnu.org/software/bash/manual/bash.html#Shell-Parameter-Expansion
 
 if [ -z "$BS_INSTALL_DIR" ]; then
-    echo "ERROR, BS_INSTALL_DIR not set"
+    echo "ERROR, BS_INSTALL_DIR not set" # have your sourced .profile?
     exit 1
 fi
 
@@ -48,8 +48,7 @@ source $BS_INSTALL_DIR/bash/helpers.sh
 # Platform includes
 case `uname -s` in
 Darwin)
-    source $BS_INSTALL_DIR/bash/xcode.sh
-    source $BS_INSTALL_DIR/bash/mac.sh
+    source $BS_INSTALL_DIR/bash/for_darwin.sh
     ;;
 *) ;;
 esac

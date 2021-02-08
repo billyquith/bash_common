@@ -34,6 +34,12 @@ Add to POSIX `.bash_profile` :-
 - `EDITOR` : default text/source editor to use.
 - `BS_INSTALL_DIR` : where this lives, bin dir.
 
+### Commands
+
+- x
+
+## Info
+
 ### .profile/.bashrc purposes
 
 * `~/.bash_profile` should be super-simple and just load `.profile` and `.bashrc` (in that order).
