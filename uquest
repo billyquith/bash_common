@@ -10,51 +10,55 @@ PACKAGE=
 ADB=
 
 usage () {
-	echo <<EOM
-uquest [-hbsiulr] PACKAGE.apk"
-	-h 		help"
-	-i 		install package to Quest
-	-u 		uninstall package from Quest
-	-r 		run package app on Quest
-	-l 		capture app log output in $LOGFILE
+	cat <<EOM
+  uquest [-hbsiulrc] PACKAGE.apk
+  
+	-h          help
+	-i PKG      install package to Quest
+	-u PKG      uninstall package from Quest
+	-r PKG      run package app on Quest
+	-l          capture app log output in $LOGFILE
+	-c CMDS     call ADB with the given commands
 
-	-b 		start Baretail following the log
-	-s		use SideQuest ADB
+	-b          start Baretail following the log
+	-s          use SideQuest ADB
 
-	uquest -rl	 : run & log"
+	e.g. run & log:	uquest -rl	
+
+	ADB docs: https://developer.android.com/studio/command-line/adb
 EOM
 }
 
-function get_adb_path_from_log ()
-{
-	if [ ! -f $BUILDLOG ]; then
-		echo "Error: Missing $BUILDLOG. Need this to find tools."
-		exit 1
-	fi
-	# Find the adb path specified in the log and get the path.
-	# Also strip off Windows CR line ending \r
-	local ADBP=$(cygpath -u $(grep '^\sadb' $BUILDLOG | sed 's/adb\s*:\s*//' | sed 's/\r//'))
-	if [ -z $ADBP ]; then
-		echo "Error: ADB path not found in $BUILDLOG."
-		exit 1
-	fi
-	if [[ ! -x "$ADBP" ]]; then
-		echo "Error: ADB does not exist at $ADBP."
-		exit 1
-	fi
-	export ADB=$ADBP
-}
 
 function get_adb_path ()
 {
 	# if there is a config file use it to get environment
-	if [ -f ./$LOGFILE ]; then
-		source $LOGFILE
+	if [ -f ./$CONFIGFILE ]; then
+		source $CONFIGFILE
 	else
 		get_adb_path_from_log
 	fi
 	if [ -z $ADB ]; then
 		echo "Error: could not find ADB in $CONFIGFILE or $BUILDLOG"
+function get_adb_path_from_log ()
+{
+    if [ ! -f $BUILDLOG ]; then
+        echo "Error: Missing $BUILDLOG. Need this to find tools."
+        exit 1
+    fi
+    # Find the adb path specified in the log and get the path.
+    # Also strip off Windows CR line ending \r
+    local ADBP=$(cygpath -u $(grep '^\sadb' $BUILDLOG | sed 's/adb\s*:\s*//' | sed 's/\r//'))
+    if [ -z $ADBP ]; then
+        echo "Error: ADB path not found in $BUILDLOG."
+        exit 1
+    fi
+    if [[ ! -x "$ADBP" ]]; then
+        echo "Error: ADB does not exist at $ADBP."
+        exit 1
+    fi
+    export ADB=$ADBP
+}
 		exit 1
 	fi
 	$ADB devices
@@ -62,50 +66,67 @@ function get_adb_path ()
 
 function get_package ()
 {
-	if [ ! -z $PACKAGE ]; then
-		PACKAGE=$1
-		if [ ! -f $PACKAGE ]; then
-			echo "Error: Package $1 not found"
+	local PKG=$1
+	if [ ! -z $PKG ]; then
+		PKG=$1
+		if [ ! -f $PKG.apk ]; then
+			echo "Error: Package $PCK not found"
 			exit 1
 		fi
 	fi
+	echo $PKG
 }
 
-while getopts "hbsiulr" options; do
+while getopts "hbsi:u:r:lc" options; do
 	case "$options" in
-	h)	usage ;;
-	s)  ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
+	h)
+		usage
+		;;
+	s)
+	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
 		echo "Use SideQuest ADB"
 		;;
-	i)	echo "Installing $PACKAGE..."
+	i)
 		get_adb_path
-		get_package $OPTARG
+		PACKAGE=$(get_package $OPTARG)
 		$ADB shell am force-stop $PACKAGE
+		echo "Installing $PACKAGE"
 		$ADB install -r $PACKAGE.apk
 		shift
 		;;
-	u)	echo "Uninstall $PACKAGE..."
+	u)
 		get_adb_path
-		get_package $OPTARG
+		PACKAGE=$(get_package $OPTARG)
 		$ADB shell am force-stop $PACKAGE
+		echo "Uninstall $PACKAGE..."
 		$ADB uninstall $PACKAGE.apk
 		shift
 		;;
-	r) 	echo "Running $PACKAGE..."
+	r) 	
+		echo "Running $PACKAGE..."
 		get_adb_path
-		get_package $OPTARG
+		PACKAGE=$(get_package $OPTARG)
 		$ADB shell am force-stop $PACKAGE
 		sleep 1
 		$ADB shell am start -n $PACKAGE/com.unity3d.player.UnityPlayerActivity
 		;;
-	l)	echo "Capture log"
+	c)
+		get_adb_path
+		shift 1
+		#echo "adb $*"
+		$ADB $*
+		;;
+	l)	
+		echo "Capture log"
 		get_adb_path
 		$ADB logcat -s Unity > $LOGFILE
 		;;
-	b)	echo "Starting Baretail..."
+	b)	
+		echo "Starting Baretail..."
 		exec baretail $(cygpath -w $LOGFILE) &  # https://baremetalsoft.com/baretail/
 		;;
-	*) 	echo "Unknown option"
+	*) 	
+		echo "Unknown option"
 	  	exit 2
 	  	;;
 	esac
