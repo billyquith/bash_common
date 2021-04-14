@@ -1,12 +1,12 @@
-# bin_shared/.bashrc
+# bash_common/.bashrc
 #
 # Purpose: This is called by interactive shells (e. terminal) and should contain
 # graphical formatting stuff.
 
 # :-    https://www.gnu.org/software/bash/manual/bash.html#Shell-Parameter-Expansion
 
-if [ -z "$BS_INSTALL_DIR" ]; then
-    echo "ERROR, BS_INSTALL_DIR not set" # have your sourced .profile?
+if [ -z "$BC_INSTALL_DIR" ]; then
+    echo "ERROR, BC_INSTALL_DIR not set" # have your sourced .profile?
     exit 1
 fi
 
@@ -40,20 +40,20 @@ Darwin)
 	 ;;
 esac
 
-source $BS_INSTALL_DIR/bash/colour.sh
-source $BS_INSTALL_DIR/bash/apps.sh
-source $BS_INSTALL_DIR/bash/bookmark.sh
-source $BS_INSTALL_DIR/bash/helpers.sh
+source $BC_INSTALL_DIR/bash/colour.sh
+source $BC_INSTALL_DIR/bash/apps.sh
+source $BC_INSTALL_DIR/bash/bookmark.sh
+source $BC_INSTALL_DIR/bash/helpers.sh
 
 # Platform includes
 case `uname -s` in
 Darwin)
-    source $BS_INSTALL_DIR/bash/for_darwin.sh
+    source $BC_INSTALL_DIR/bash/for_darwin.sh
     ;;
 *) ;;
 esac
 
-source $BS_INSTALL_DIR/completion/brew.completion.bash
-source $BS_INSTALL_DIR/completion/git.completion.bash
+source $BC_INSTALL_DIR/completion/brew.completion.bash
+source $BC_INSTALL_DIR/completion/git.completion.bash
 
 export PS1="$(clr_escape '\w>' '36') "

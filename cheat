@@ -1,10 +1,13 @@
 #!/bin/sh
 
-CHLOC="$HOME/Code/gamedev/tools/cheatsheet/"
+CHLOC="$BC_INSTALL_DIR/.cheat"
 
 # -e : edit
-if [ $1 == "-e" ]; then
-  mate $CHLOC
+if [ "$1" = "-e" ]; then
+  if [ ! -d "$CHLOC" ]; then
+    git clone http:// $CHLOC
+  fi
+  $EDITOR $CHLOC
   exit 0
 fi
 
@@ -28,8 +31,13 @@ fi
 
 URL="file://$CHLOC/index.html${SHEET}"
 
-exec osascript <<EOM
-on run argv
-tell application "Safari" to open location "${URL}"
-end run
+case `uname -s` in
+Darwin)
+  exec osascript <<EOM
+    on run argv
+    tell application "Safari" to open location "${URL}"
+    end run
 EOM
+;;
+CYG*) open $URL ;;
+esac

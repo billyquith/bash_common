@@ -4,6 +4,6 @@
 #
 # call: [ -f ~/bin_shared/.profile ] && source ~/bin_shared/.profile
 
-export BS_INSTALL_DIR=$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)
-export PATH=$PATH:$BS_INSTALL_DIR
+export BC_INSTALL_DIR=$(cd $(dirname ${BASH_SOURCE[0]}) && pwd)
+export PATH=$PATH:$BC_INSTALL_DIR
 

@@ -1,22 +1,24 @@
 
-README
-------
+BASH_COMMON README
+------------------
 
-This is a collection of BASH scripts to enhance a basic BASH environment. Features (non-exhaustive) added:
+This is a collection of scripts to quickly set up a BASH environment. It has a bias towards game development.
+Features (non-exhaustive) include:
 
 - Directory bookmarks.
 - Templates for new projects.
 - Shortcuts/piping into text editors.
 - Various command completions.
+- Application launchers/helpers.
 
 ## Installing
 
-Clone/download to a directory (`~/bash_shared` in this example).
+Clone/download to a directory (`~/bash_common` in this example).
 
 Add to POSIX `.bash_profile` :-
 
 ```bash
-[ -f ~/bash_shared/.profile ] && source ~/bash_shared/.profile
+[ -f ~/bash_common/.profile ] && source ~/bash_common/.profile
 
 [ -f ~/.bashrc ] && source ~/.bashrc
 ```
@@ -24,7 +26,7 @@ Add to POSIX `.bash_profile` :-
 `.bashrc` :-
 
 ```bash
-[ -f ~/bash_shared/.bashrc ] && source ~/bash_shared/.bashrc
+[ -f ~/bash_common/.bashrc ] && source ~/bash_common/.bashrc
 ```
 
 ## Environment
@@ -32,7 +34,7 @@ Add to POSIX `.bash_profile` :-
 ### Variables
 
 - `EDITOR` : default text/source editor to use.
-- `BS_INSTALL_DIR` : where this lives, bin dir.
+- `BC_INSTALL_DIR` : where this lives, bin dir.
 
 ### Commands
 
