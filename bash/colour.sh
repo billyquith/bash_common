@@ -22,7 +22,7 @@ CLR_REVERSE=7           # set reverse video
 CLR_BLACK=30            # set black foreground
 CLR_RED=31              # set red foreground
 CLR_GREEN=32            # set green foreground
-CLR_BROWN=33            # set brown foreground
+CLR_YELLOW=33           # set brown/yellow foreground
 CLR_BLUE=34             # set blue foreground
 CLR_MAGENTA=35          # set magenta foreground
 CLR_CYAN=36             # set cyan foreground
@@ -31,7 +31,7 @@ CLR_WHITE=37            # set white foreground
 CLR_BLACKB=40           # set black background
 CLR_REDB=41             # set red background
 CLR_GREENB=42           # set green background
-CLR_BROWNB=43           # set brown background
+CLR_YELLOWB=43          # set brown/yellow background
 CLR_BLUEB=44            # set blue background
 CLR_MAGENTAB=45         # set magenta background
 CLR_CYANB=46            # set cyan background
@@ -46,11 +46,24 @@ function clr_escape
     if ! [ $2 -ge 0 -a $2 -le 47 ] 2>/dev/null; then
       echo "clr_escape: argument \"$2\" is out of range" >&2 && return 1
     fi
+    result="${CLR_ESC}${2}m${result}${CLR_ESC}${CLR_RESET}m"
+    shift || break
+  done
+  echo -e "$result"
+}
+
+# Function for PS/command prompt. These need esapes wrapping.
+function clr_escape_wrap
+{
+  local result="$1"
+  until [ -z "$2" ]; do
+    if ! [ $2 -ge 0 -a $2 -le 47 ] 2>/dev/null; then
+      echo "clr_escape: argument \"$2\" is out of range" >&2 && return 1
+    fi
     # Note: invisible codes wrapped in \[ \] - http://stackoverflow.com/a/11832923/3233
     result="\[${CLR_ESC}${2}m\]${result}\[${CLR_ESC}${CLR_RESET}m\]"
     shift || break
   done
-
   echo -e "$result"
 }
 
@@ -66,7 +79,7 @@ function clr_reverse         { clr_escape "$1" $CLR_REVERSE;         }
 function clr_black           { clr_escape "$1" $CLR_BLANK;           }
 function clr_red             { clr_escape "$1" $CLR_RED;             }
 function clr_green           { clr_escape "$1" $CLR_GREEN;           }
-function clr_brown           { clr_escape "$1" $CLR_BROWN;           }
+function clr_yellow          { clr_escape "$1" $CLR_YELLOW;          }
 function clr_blue            { clr_escape "$1" $CLR_BLUE;            }
 function clr_magenta         { clr_escape "$1" $CLR_MAGENTA;         }
 function clr_cyan            { clr_escape "$1" $CLR_CYAN;            }
@@ -74,7 +87,7 @@ function clr_white           { clr_escape "$1" $CLR_WHITE;           }
 function clr_blackb          { clr_escape "$1" $CLR_BLACKB;          }
 function clr_redb            { clr_escape "$1" $CLR_REDB;            }
 function clr_greenb          { clr_escape "$1" $CLR_GREENB;          }
-function clr_brownb          { clr_escape "$1" $CLR_BROWNB;          }
+function clr_yellowb         { clr_escape "$1" $CLR_YELLOWB;         }
 function clr_blueb           { clr_escape "$1" $CLR_BLUEB;           }
 function clr_magentab        { clr_escape "$1" $CLR_MAGENTAB;        }
 function clr_cyanb           { clr_escape "$1" $CLR_CYANB;           }
@@ -111,7 +124,7 @@ function clr_dump
     30       clr_black          $CLR_BLACK
     31       clr_red            $CLR_RED
     32       clr_green          $CLR_GREEN
-    33       clr_brown          $CLR_BROWN
+    33       clr_yellow         $CLR_YELLOW
     34       clr_blue           $CLR_BLUE
     35       clr_magenta        $CLR_MAGENTA
     36       clr_cyan           $CLR_CYAN
@@ -120,7 +133,7 @@ function clr_dump
     40       clr_blackb         $CLR_BLACKB
     41       clr_redb           $CLR_REDB
     42       clr_greenb         $CLR_GREENB
-    43       clr_brownb         $CLR_BROWNB
+    43       clr_yellowb        $CLR_YELLOWB
     44       clr_blueb          $CLR_BLUEB
     45       clr_magentab       $CLR_MAGENTAB
     46       clr_cyanb          $CLR_CYANB

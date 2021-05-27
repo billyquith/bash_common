@@ -30,14 +30,20 @@ alias ....='cd ../../..' # Go up three directories
 # Platform config
 case `uname -s` in
 CYGWIN*)
-	 export EDITOR=subl
-	 ;;
+	export BC_SYSTEM=cygwin
+	export BC_OS=windows
+	export EDITOR=subl
+	;;
 Darwin)
-	 export EDITOR=mate
-	 ;;
+	export BC_SYSTEM=darwin
+	export BC_OS=macos
+	export EDITOR=mate
+	;;
  *)
-	 export EDITOR=vi
-	 ;;
+	export BC_SYSTEM=unix
+	export BC_OS=unix
+	export EDITOR=vi
+	;;
 esac
 
 source $BC_INSTALL_DIR/bash/colour.sh
@@ -56,4 +62,6 @@ esac
 source $BC_INSTALL_DIR/completion/brew.completion.bash
 source $BC_INSTALL_DIR/completion/git.completion.bash
 
-export PS1="$(clr_escape '\w>' '36') "
+export PS1="$(clr_escape_wrap '\w>' '36') "
+
+echo "$(clr_magenta "Welcome to") $(clr_escape bash_common $CLR_YELLOW $CLR_BOLD) 8D"
