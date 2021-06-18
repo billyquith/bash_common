@@ -11,6 +11,16 @@ towards game development. Features (non-exhaustive) include:
 - Various command completions.
 - Application launchers/helpers.
 
+### Tools
+
+- Bookmark directories
+  - `g <name>` cd to bookmark
+  - `bl` list bookmarks
+  - `bp <name>` print bookmark directory
+  - `bs <name>` save current directory as bookmark
+  - `bd <name>` delete bookmark
+- `markdown` Python markdown2 processor
+  
 ## Installing
 
 Clone/download to a directory (`~/bash_common` in this example). bash_common needs
@@ -41,10 +51,6 @@ In your `~/.bashrc` ensure that `bash_common/.bashrc` is sourced:
 
 - `EDITOR` : default text/source editor to use.
 - `BC_INSTALL_DIR` : where this lives, bin dir.
-
-### Commands
-
-- x
 
 ## Info
 
