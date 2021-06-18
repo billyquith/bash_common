@@ -32,12 +32,12 @@ case `uname -s` in
 CYGWIN*)
 	export BC_SYSTEM=cygwin
 	export BC_OS=windows
-	export EDITOR=subl
+	export EDITOR=code  # VS Code
 	;;
 Darwin)
 	export BC_SYSTEM=darwin
 	export BC_OS=macos
-	export EDITOR=mate
+	export EDITOR=mate  # Textmate
 	;;
  *)
 	export BC_SYSTEM=unix
@@ -51,10 +51,11 @@ source $BC_INSTALL_DIR/bash/apps.sh
 source $BC_INSTALL_DIR/bash/bookmark.sh
 source $BC_INSTALL_DIR/bash/helpers.sh
 
+source $BC_INSTALL_DIR/bash/$BC_SYSTEM.sh
+
 # Platform includes
-case `uname -s` in
-Darwin)
-    source $BC_INSTALL_DIR/bash/for_darwin.sh
+case $BC_SYSTEM in
+darwin)
     ;;
 *) ;;
 esac
