@@ -40,6 +40,11 @@ function get_adb_path ()
 	fi
 	if [ -z $ADB ]; then
 		echo "Error: could not find ADB in $CONFIGFILE or $BUILDLOG"
+		exit 1
+	fi
+	$ADB devices
+}
+
 function get_adb_path_from_log ()
 {
     if [ ! -f $BUILDLOG ]; then
@@ -58,10 +63,6 @@ function get_adb_path_from_log ()
         exit 1
     fi
     export ADB=$ADBP
-}
-		exit 1
-	fi
-	$ADB devices
 }
 
 function get_package ()
