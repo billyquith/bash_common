@@ -35,6 +35,14 @@ function get_adb_path ()
 	# if there is a config file use it to get environment
 	if [ -f ./$CONFIGFILE ]; then
 		source $CONFIGFILE
+		if [ -z $UNITY_PATH ]; then
+			echo "UNITY_PATH not set in .uquest config"
+			exit 1
+		fi
+		if [ ! -d $UNITY_PATH ]; then
+			echo "No Unity install at UNITY_PATH=$UNITY_PATH"
+			exit 1
+		fi
 	else
 		get_adb_path_from_log
 	fi
