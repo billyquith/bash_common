@@ -54,10 +54,8 @@ source $BC_INSTALL_DIR/commands/helpers.sh
 
 #### Platform specific ####
 
-if [ -d ./$BC_SYSTEM ]; then
-	export PATH=$PATH:$BC_INSTALL_DIR/$BC_SYSTEM
-	source ./$BC_SYSTEM/_init.sh
-fi
+export PATH=$PATH:$BC_INSTALL_DIR/$BC_SYSTEM
+source $BC_INSTALL_DIR/$BC_SYSTEM/_init.sh
 
 source $BC_INSTALL_DIR/completion/adb.completion.bash
 source $BC_INSTALL_DIR/completion/git.completion.bash
