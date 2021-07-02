@@ -28,8 +28,8 @@ alias ...='cd ../..'     # Go up two directories
 alias ....='cd ../../..' # Go up three directories
 
 # Platform config
-case `uname -s` in
-CYGWIN*)
+case `uname -o` in
+Cygwin)
 	export BC_SYSTEM=cygwin
 	export BC_OS=windows
 	export EDITOR=code  # VS Code
@@ -46,22 +46,33 @@ Darwin)
 	;;
 esac
 
+# functions & commands
 source $BC_INSTALL_DIR/bash/colour.sh
 source $BC_INSTALL_DIR/bash/apps.sh
 source $BC_INSTALL_DIR/bash/bookmark.sh
 source $BC_INSTALL_DIR/bash/helpers.sh
 
-source $BC_INSTALL_DIR/bash/$BC_SYSTEM.sh
+#### Platform specific ####
 
-# Platform includes
+if [ -d ./$BC_SYSTEM ]; then
+	export PATH=$PATH:$BC_INSTALL_DIR/$BC_SYSTEM
+	source ./$BC_SYSTEM/_init.sh
+fi
+
 case $BC_SYSTEM in
+cygwin)
+	export PATH=$PATH:$BC_INSTALL_DIR/cygwin
+	;;
 darwin)
+	source $BC_INSTALL_DIR/completion/brew.completion.bash
     ;;
-*) ;;
+*)	source $BC_INSTALL_DIR/bash/$BC_SYSTEM.sh 
+	;;
 esac
 
-source $BC_INSTALL_DIR/completion/brew.completion.bash
-source $BC_INSTALL_DIR/completion/git.completion.bash
+source $BC_INSTALL_DIR/completion/adb.completion.bash
+#source $BC_INSTALL_DIR/completion/git.completion.bash
+source $BC_INSTALL_DIR/completion/p4.completion.bash
 
 export PS1="$(clr_escape_wrap '\w>' '36') "
 
