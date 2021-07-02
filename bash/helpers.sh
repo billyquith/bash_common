@@ -1,4 +1,11 @@
 
+# bash_common update
+function bcup {
+    pushd $BC_INSTALL_DIR
+    git pull
+    popd
+}
+
 # Make a tempfile name
 function tmpfile {
     echo $(mktemp /tmp/temp.$$.XXXXXX.tmp)
