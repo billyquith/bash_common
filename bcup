@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
+
+echo "Get latest"
+pushd $BC_INSTALL_DIR
+git pull
+popd
+
+if [ ! -x "$(command -v wget)" ]; then
+    echo "Error: wget not installed. Please add." >&2
+    exit 1
+fi
+
