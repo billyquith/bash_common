@@ -10,23 +10,6 @@ if [ -z "$BC_INSTALL_DIR" ]; then
     exit 1
 fi
 
-shopt -s histappend
-shopt -s cmdhist
-export HISTCONTROL="erasedups:ignoreboth" # ignore duplicates
-export HISTIGNORE="&:[ ]*:exit"
-export HISTFILESIZE=500000
-export HISTSIZE=10000
-
-alias ls='ls -GF'
-alias ll='ls -hl'
-alias la='ls -AF'
-alias cls='clear'
-alias h='history'
-
-alias ..='cd ..'         # Go up one directory
-alias ...='cd ../..'     # Go up two directories
-alias ....='cd ../../..' # Go up three directories
-
 # Platform config
 case `uname -o` in
 Cygwin)
@@ -46,11 +29,28 @@ Darwin)
 	;;
 esac
 
-# functions & commands
-source $BC_INSTALL_DIR/bash/colour.sh
-source $BC_INSTALL_DIR/bash/apps.sh
-source $BC_INSTALL_DIR/bash/bookmark.sh
-source $BC_INSTALL_DIR/bash/helpers.sh
+shopt -s histappend
+shopt -s cmdhist
+export HISTCONTROL="erasedups:ignoreboth" # ignore duplicates
+export HISTIGNORE="&:[ ]*:exit"
+export HISTFILESIZE=500000
+export HISTSIZE=10000
+
+alias ls='ls -GF'
+alias ll='ls -hl'
+alias la='ls -AF'
+alias cls='clear'
+alias h='history'
+
+alias ..='cd ..'         # Go up one directory
+alias ...='cd ../..'     # Go up two directories
+alias ....='cd ../../..' # Go up three directories
+
+# common functions & commands
+source $BC_INSTALL_DIR/commands/colour.sh
+source $BC_INSTALL_DIR/commands/apps.sh
+source $BC_INSTALL_DIR/commands/bookmark.sh
+source $BC_INSTALL_DIR/commands/helpers.sh
 
 #### Platform specific ####
 
@@ -60,18 +60,12 @@ if [ -d ./$BC_SYSTEM ]; then
 fi
 
 case $BC_SYSTEM in
-cygwin)
-	export PATH=$PATH:$BC_INSTALL_DIR/cygwin
-	;;
-darwin)
-	source $BC_INSTALL_DIR/completion/brew.completion.bash
-    ;;
 *)	source $BC_INSTALL_DIR/bash/$BC_SYSTEM.sh 
 	;;
 esac
 
 source $BC_INSTALL_DIR/completion/adb.completion.bash
-#source $BC_INSTALL_DIR/completion/git.completion.bash
+source $BC_INSTALL_DIR/completion/git.completion.bash
 source $BC_INSTALL_DIR/completion/p4.completion.bash
 
 export PS1="$(clr_escape_wrap '\w>' '36') "
