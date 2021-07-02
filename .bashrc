@@ -59,11 +59,6 @@ if [ -d ./$BC_SYSTEM ]; then
 	source ./$BC_SYSTEM/_init.sh
 fi
 
-case $BC_SYSTEM in
-*)	source $BC_INSTALL_DIR/bash/$BC_SYSTEM.sh 
-	;;
-esac
-
 source $BC_INSTALL_DIR/completion/adb.completion.bash
 source $BC_INSTALL_DIR/completion/git.completion.bash
 source $BC_INSTALL_DIR/completion/p4.completion.bash

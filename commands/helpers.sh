@@ -3,6 +3,7 @@
 function tmpfile {
     echo $(mktemp /tmp/temp.$$.XXXXXX.tmp)
 }
+export -f tmpfile
 
 # Convert a number to human readable
 function b2h {
@@ -14,6 +15,7 @@ function b2h {
     done
     echo "$b$d ${S[$s]}"
 }
+export -f b2h
 
 # Output disk usage in useful format
 function duh {    
@@ -31,3 +33,9 @@ then
     }
 fi
 
+# > if command_exists touch; then ... fi
+function command_exists
+{
+    [ -x "$(command -v $1)" ]   # returns true/false
+}
+export -f command_exists
