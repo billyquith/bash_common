@@ -11,8 +11,8 @@ if [ -z "$BC_INSTALL_DIR" ]; then
 fi
 
 # Platform config
-case `uname -o` in
-Cygwin)
+case `uname -s` in
+CYGWIN*)
 	export BC_SYSTEM=cygwin
 	export BC_OS=windows
 	export EDITOR=code  # VS Code
