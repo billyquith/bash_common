@@ -1,6 +1,6 @@
 # MacOS Darwin specific functionality
 
-source ../completion/brew.completion.bash
+source $BC_INSTALL_DIR/completion/brew.completion.bash
 
 # Use Finder's Quick Look on a file (^C or space to close)
 alias ql='qlmanage -p 2>/dev/null'
