@@ -36,7 +36,7 @@ export HISTIGNORE="&:[ ]*:exit"
 export HISTFILESIZE=500000
 export HISTSIZE=10000
 
-alias ls='ls -GF'
+alias ls='ls --color=auto -GF'
 alias ll='ls -hl'
 alias la='ls -AF'
 alias cls='clear'
@@ -48,9 +48,16 @@ alias ....='cd ../../..' # Go up three directories
 
 # common functions & commands
 source $BC_INSTALL_DIR/commands/colour.sh
-source $BC_INSTALL_DIR/commands/apps.sh
+source $BC_INSTALL_DIR/commands/appwrap.sh
 source $BC_INSTALL_DIR/commands/bookmark.sh
 source $BC_INSTALL_DIR/commands/helpers.sh
+
+# Loads the system's Bash completion modules.
+if [[ -r /etc/bash_completion ]]; then
+  	source /etc/bash_completion
+elif [[ -r /etc/profile.d/bash_completion.sh ]]; then
+  	source /etc/profile.d/bash_completion.sh
+fi
 
 #### Platform specific ####
 

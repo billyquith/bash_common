@@ -1,7 +1,9 @@
 
 # Make a tempfile name
-function tmpfile {
-    echo $(mktemp /tmp/temp.$$.XXXXXX.tmp)
+#   - TMPFILE=/tmp/data$(tmpfile)
+function tmpfile
+{
+    echo $(mktemp XXXXXXXX.tmp)
 }
 export -f tmpfile
 
@@ -39,3 +41,4 @@ function command_exists
     [ -x "$(command -v $1)" ]   # returns true/false
 }
 export -f command_exists
+

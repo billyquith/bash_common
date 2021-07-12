@@ -1,5 +1,15 @@
 # MacOS Darwin specific functionality
 
+if command_exists brew ; then
+    BREW_PREFIX=${BREW_PREFIX:-$(brew --prefix)}
+
+    # homebrew/versions/bash-completion2 (required for projects.completion.bash) is installed to this path
+    if [[ -r "$BREW_PREFIX"/etc/profile.d/bash_completion.sh ]] ; then
+        # shellcheck disable=SC1090
+        source "$BREW_PREFIX"/etc/profile.d/bash_completion.sh
+    fi
+fi
+
 source $BC_INSTALL_DIR/completion/brew.completion.bash
 
 # Use Finder's Quick Look on a file (^C or space to close)

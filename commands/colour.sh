@@ -1,5 +1,4 @@
-#!/bin/bash
-#
+
 # Constants and functions for terminal colors.
 # Author: Max Tsepkov <max@yogi.pw>
 # Source: https://github.com/maxtsepkov/bash_colors/blob/master/bash_colors.sh
