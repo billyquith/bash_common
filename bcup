@@ -4,7 +4,7 @@ SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
 
 echo "Get latest"
 pushd $BC_INSTALL_DIR
-#git pull
+git pull
 popd
 
 if ! command_exists wget; then
@@ -12,3 +12,13 @@ if ! command_exists wget; then
     exit 1
 fi
 
+# update
+if [ "$1" == "-u" ]; then
+    pushd $BC_INSTALL_DIR
+
+    pushd completion
+    wget https://raw.githubusercontent.com/git/git/master/contrib/completion/git-completion.bash -O git.completion.bash
+    popd
+
+    popd
+fi
