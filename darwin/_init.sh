@@ -1,5 +1,9 @@
 # MacOS Darwin specific functionality
 
+alias ls='ls -GF'
+alias ll='ls -hl'
+alias la='ls -A'
+
 if command_exists brew ; then
     BREW_PREFIX=${BREW_PREFIX:-$(brew --prefix)}
 

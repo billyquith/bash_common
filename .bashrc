@@ -36,9 +36,6 @@ export HISTIGNORE="&:[ ]*:exit"
 export HISTFILESIZE=500000
 export HISTSIZE=10000
 
-alias ls='ls --color=auto -GF'
-alias ll='ls -hl'
-alias la='ls -AF'
 alias cls='clear'
 alias h='history'
 
