@@ -79,8 +79,7 @@ function get_package ()
 	if [ ! -z $PKG ]; then
 		PKG=$1
 		if [ ! -f $PKG.apk ]; then
-			echo "Error: Package $PCK not found"
-			exit 1
+			echo "Error: Package $PCK.apk not found" >&2
 		fi
 	fi
 	echo $PKG
@@ -112,11 +111,13 @@ while getopts "hbsi:u:r:lc" options; do
 		shift
 		;;
 	r) 	
-		echo "Running $PACKAGE..."
 		get_adb_path
 		PACKAGE=$(get_package $OPTARG)
+		echo "Running $PACKAGE..."
+		echo "Stopping existing package"
 		$ADB shell am force-stop $PACKAGE
 		sleep 1
+		echo "Starting new instance of package"
 		$ADB shell am start -n $PACKAGE/com.unity3d.player.UnityPlayerActivity
 		;;
 	c)
