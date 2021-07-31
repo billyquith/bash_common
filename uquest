@@ -8,14 +8,19 @@ CONFIGFILE=.uquest
 LOGFILE=adblog.txt
 BUILDLOG=Build.log # Unity build output log
 UNITY_ADB_PATH=Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb
+ADB_HOW=Unset
 
+# package.apk path
+APK=
+# com.vendor.app package name
 PACKAGE=
+# path of adb to use
 ADB=
 
 usage () {
+	colecho -white "  $(basename $0) [-hbsiulrc] [PACKAGE.apk]"
 	cat <<EOM
-  uquest [-hbsiulrc] PACKAGE.apk
-  
+ 
 	-h          help
 	-i PKG      install package to Quest
 	-u PKG      uninstall package from Quest
@@ -52,6 +57,8 @@ if [ ! -f ./$CONFIGFILE ]; then
 #UNITY_PATH=$UNITY_INSTALL/2019.4.25f
 # ADB path to use. If blacnk & UNITY_PATH set, uses Unity adb.
 #ADB_PATH=
+# APK=
+# PACKAGE=
 EOM
 fi
 
@@ -59,20 +66,21 @@ source ~/$CONFIGFILE
 source ./$CONFIGFILE
 
 ADB=$ADB_PATH
+ADB_HOW="From $CONFIGFILE config"
 
 # Work out path to adb
 if [ -z $ADB ]; then
-	echo "ADB_PATH unset. Trying to determine path."
+	#colecho -cyan "ADB_PATH unset. Trying to determine path."
 	if [ -z $UNITY_PATH ]; then
-		echo "UNITY_PATH not set in .uquest config"
+		colecho -red "UNITY_PATH not set in .uquest config"
 	else
 		if [ ! -d $UNITY_PATH ]; then
-			echo "No Unity install at UNITY_PATH=$UNITY_PATH"
+			colecho -red "No Unity install at UNITY_PATH=$UNITY_PATH"
 			exit 1
 		fi
 		if [ -x $UNITY_PATH/$UNITY_ADB_PATH ]; then
 			ADB=$UNITY_PATH/$UNITY_ADB_PATH
-			echo "Using Unity $ADB"
+			ADB_HOW="From Unity: $UNITY_PATH"
 		fi
 	fi
 
@@ -83,6 +91,7 @@ if [ -z $ADB ]; then
 			LOG_ADB=$(grep '^\sadb' $BUILDLOG | sed 's/adb\s*:\s*//' | sed 's/\r//')
 			if [ ! -z $LOG_ADB ]; then
 				ADB=$(cygpath -u "$LOG_ADB")
+				ADB_HOW="From $BUILDLOG"
 				echo "adb found in $BUILDLOG: $ADB"
 			else
 				echo "adb not found in $BUILDLOG"
@@ -92,7 +101,7 @@ if [ -z $ADB ]; then
 fi
 
 if [ -z $ADB ]; then
-	echo "Error: could not find ADB in $CONFIGFILE or $BUILDLOG"
+	colecho -red "Error: could not find ADB in $CONFIGFILE or $BUILDLOG"
 	exit 1
 fi
 
@@ -110,9 +119,12 @@ while getopts "hbsi:u:r:lpc" options; do
 	h)
 		usage
 		echo
-		echo "    UNITY_INSTALL=${UNITY_INSTALL:-"*unset*"}"
-		echo "    UNITY_PATH=${UNITY_PATH:-"*unset*"}"
-		echo "    ADB=${ADB:-"*not found*"}"
+		colecho -yellow "    UNITY_INSTALL=" -grey "${UNITY_INSTALL:-"*unset*"}"
+		colecho -yellow "    UNITY_PATH=" -grey "${UNITY_PATH:-"*unset*"}"
+		colecho -yellow "    ADB=" -grey "${ADB:-"*not found*"}"
+		colecho -yellow "    Adb found: " -grey "$ADB_HOW"
+		colecho -yellow "    APK=" -grey "${APK:-"*unset*"}"
+		colecho -yellow "    PACKAGE=" -grey "${PACKAGE:-"*unset*"}"
 		;;
 	s)
 	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
@@ -159,7 +171,7 @@ while getopts "hbsi:u:r:lpc" options; do
 		;;
 	b)	
 		if ! $(command_exists baretail); then
-			echo "Error: Baretail is not in the path."
+			colecho -red "Error: Baretail is not in the path."
 			exit 1
 		fi
 		echo "Starting Baretail..."
