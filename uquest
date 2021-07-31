@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Run a Unity compiled Oculus Quest app using adb.
+# 	= config files in ~ & .
 # 	- Captures log.
 # ADB docs: https://developer.android.com/studio/command-line/adb
 
+CONFIGFILE=.uquest
 LOGFILE=adblog.txt
 BUILDLOG=Build.log # Unity build output log
-CONFIGFILE=.uquest
+UNITY_ADB_PATH=Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb
+
 PACKAGE=
 ADB=
 
@@ -17,6 +20,7 @@ usage () {
 	-i PKG      install package to Quest
 	-u PKG      uninstall package from Quest
 	-r PKG      run package app on Quest
+	-p          show installed packages
 	-l          capture app log output in $LOGFILE
 	-c CMDS     call ADB with the given commands
 
@@ -29,90 +33,110 @@ usage () {
 EOM
 }
 
+if [ ! -f ~/$CONFIGFILE ]; then
+	cat > ~/$CONFIGFILE <<EOM
+# uquest config file - change these values as appropriate for your environment
+# Where Unity installs go
+#UNITY_INSTALL=/cygdrive/c/Unity
+# Default Unity version to use
+#UNITY_PATH=UNITY_INSTALL/2019.4.25f
+# Global ADB path to use.
+#ADB_PATH=
+EOM
+fi
 
-function get_adb_path ()
-{
-	# if there is a config file use it to get environment
-	if [ -f ./$CONFIGFILE ]; then
-		source $CONFIGFILE
-		if [ -z $UNITY_PATH ]; then
-			echo "UNITY_PATH not set in .uquest config"
-			exit 1
-		fi
+if [ ! -f ./$CONFIGFILE ]; then
+	cat > ./$CONFIGFILE <<EOM
+# uquest config file - change these values as appropriate for your environment
+# Unity install to use
+#UNITY_PATH=$UNITY_INSTALL/2019.4.25f
+# ADB path to use. If blacnk & UNITY_PATH set, uses Unity adb.
+#ADB_PATH=
+EOM
+fi
+
+source ~/$CONFIGFILE
+source ./$CONFIGFILE
+
+ADB=$ADB_PATH
+
+# Work out path to adb
+if [ -z $ADB ]; then
+	echo "ADB_PATH unset. Trying to determine path."
+	if [ -z $UNITY_PATH ]; then
+		echo "UNITY_PATH not set in .uquest config"
+	else
 		if [ ! -d $UNITY_PATH ]; then
 			echo "No Unity install at UNITY_PATH=$UNITY_PATH"
 			exit 1
 		fi
-	else
-		get_adb_path_from_log
+		if [ -x $UNITY_PATH/$UNITY_ADB_PATH ]; then
+			ADB=$UNITY_PATH/$UNITY_ADB_PATH
+			echo "Using Unity $ADB"
+		fi
 	fi
-	if [ -z $ADB ]; then
-		echo "Error: could not find ADB in $CONFIGFILE or $BUILDLOG"
-		exit 1
-	fi
-	$ADB devices
-}
 
-function get_adb_path_from_log ()
-{
-    if [ ! -f $BUILDLOG ]; then
-        echo "Error: Missing $BUILDLOG. Need this to find tools."
-        exit 1
-    fi
-    # Find the adb path specified in the log and get the path.
-    # Also strip off Windows CR line ending \r
-    local ADBP=$(cygpath -u $(grep '^\sadb' $BUILDLOG | sed 's/adb\s*:\s*//' | sed 's/\r//'))
-    if [ -z $ADBP ]; then
-        echo "Error: ADB path not found in $BUILDLOG."
-        exit 1
-    fi
-    if [[ ! -x "$ADBP" ]]; then
-        echo "Error: ADB does not exist at $ADBP."
-        exit 1
-    fi
-    export ADB=$ADBP
-}
+	if [ -z $ADB ]; then
+		if [ -f $BUILDLOG ]; then
+			# Find the adb path specified in the log and get the path.
+			# Also strip off Windows CR line ending \r
+			LOG_ADB=$(grep '^\sadb' $BUILDLOG | sed 's/adb\s*:\s*//' | sed 's/\r//')
+			if [ ! -z $LOG_ADB ]; then
+				ADB=$(cygpath -u "$LOG_ADB")
+				echo "adb found in $BUILDLOG: $ADB"
+			else
+				echo "adb not found in $BUILDLOG"
+			fi
+		fi
+	fi
+fi
+
+if [ -z $ADB ]; then
+	echo "Error: could not find ADB in $CONFIGFILE or $BUILDLOG"
+	exit 1
+fi
 
 function get_package ()
 {
-	local PKG=$1
-	if [ ! -z $PKG ]; then
-		PKG=$1
-		if [ ! -f $PKG.apk ]; then
-			echo "Error: Package $PCK.apk not found" >&2
-		fi
+	local PKG=${1/.apk/}  # strip postfix
+	if [ -z $PKG ] || [ ! -f $PKG.apk ]; then
+		echo "Error: Package $PCK.apk not found" >&2
 	fi
 	echo $PKG
 }
 
-while getopts "hbsi:u:r:lc" options; do
+while getopts "hbsi:u:r:lpc" options; do
 	case "$options" in
 	h)
 		usage
+		echo
+		echo "    UNITY_INSTALL=${UNITY_INSTALL:-"*unset*"}"
+		echo "    UNITY_PATH=${UNITY_PATH:-"*unset*"}"
+		echo "    ADB=${ADB:-"*not found*"}"
 		;;
 	s)
 	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
 		echo "Use SideQuest ADB"
 		;;
 	i)
-		get_adb_path
 		PACKAGE=$(get_package $OPTARG)
+		$ADB devices
+		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
-		echo "Installing $PACKAGE"
+		echo "Installing $PACKAGE.apk"
 		$ADB install -r $PACKAGE.apk
 		shift
 		;;
 	u)
-		get_adb_path
-		PACKAGE=$(get_package $OPTARG)
+		PACKAGE=$OPTARG
+		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
-		echo "Uninstall $PACKAGE..."
-		$ADB uninstall $PACKAGE.apk
+		echo "Uninstalling $PACKAGE..."
+		$ADB uninstall $PACKAGE
 		shift
 		;;
 	r) 	
-		get_adb_path
-		PACKAGE=$(get_package $OPTARG)
+		PACKAGE=$OPTARG
 		echo "Running $PACKAGE..."
 		echo "Stopping existing package"
 		$ADB shell am force-stop $PACKAGE
@@ -120,18 +144,24 @@ while getopts "hbsi:u:r:lc" options; do
 		echo "Starting new instance of package"
 		$ADB shell am start -n $PACKAGE/com.unity3d.player.UnityPlayerActivity
 		;;
+	p)
+		# show 3rd party packages installed
+		$ADB shell pm list packages -3
+		;;
 	c)
-		get_adb_path
+		# user command
 		shift 1
-		#echo "adb $*"
 		$ADB $*
 		;;
 	l)	
 		echo "Capture log"
-		get_adb_path
 		$ADB logcat -s Unity > $LOGFILE
 		;;
 	b)	
+		if ! $(command_exists baretail); then
+			echo "Error: Baretail is not in the path."
+			exit 1
+		fi
 		echo "Starting Baretail..."
 		exec baretail $(cygpath -w $LOGFILE) &  # https://baremetalsoft.com/baretail/
 		;;
