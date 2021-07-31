@@ -22,17 +22,17 @@ usage () {
 	cat <<EOM
  
 	-h          help
-	-i PKG      install package to Quest
-	-u PKG      uninstall package from Quest
-	-r PKG      run package app on Quest
-	-p          show installed packages
+	-i [APK]    install package to device
+	-u PKG      uninstall package from device
+	-r PKG      run package app on device
+	--list      list installed packages
 	-l          capture app log output in $LOGFILE
 	-c CMDS     call ADB with the given commands
 
-	-b          start Baretail following the log
-	-s          use SideQuest ADB
+	--bare      start Baretail following the log
+	--side      use SideQuest ADB
 
-	e.g. run & log:	uquest -rl	
+	e.g. run & log:	uquest -r -l
 
 	ADB docs: https://developer.android.com/studio/command-line/adb
 EOM
@@ -114,9 +114,9 @@ function get_package ()
 	echo $PKG
 }
 
-while getopts "hbsi:u:r:lpc" options; do
-	case "$options" in
-	h)
+while true; do
+	case "$1" in
+	-h|--help)
 		usage
 		echo
 		colecho -yellow "    UNITY_INSTALL=" -grey "${UNITY_INSTALL:-"*unset*"}"
@@ -126,20 +126,19 @@ while getopts "hbsi:u:r:lpc" options; do
 		colecho -yellow "    APK=" -grey "${APK:-"*unset*"}"
 		colecho -yellow "    PACKAGE=" -grey "${PACKAGE:-"*unset*"}"
 		;;
-	s)
-	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
-		echo "Use SideQuest ADB"
-		;;
-	i)
-		PACKAGE=$(get_package $OPTARG)
+	-i|--install)
 		$ADB devices
+		PKG=$APK
+		if [ -z $PKG ] || [ ! -f $PKG ]; then
+			colecho -red "Error: Package $PKG not found" >&2
+		fi
 		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
-		echo "Installing $PACKAGE.apk"
-		$ADB install -r $PACKAGE.apk
+		echo "Installing $PKG"
+		$ADB install -r $PKG
 		shift
 		;;
-	u)
+	-u|--uninstall)
 		PACKAGE=$OPTARG
 		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
@@ -147,38 +146,47 @@ while getopts "hbsi:u:r:lpc" options; do
 		$ADB uninstall $PACKAGE
 		shift
 		;;
-	r) 	
-		PACKAGE=$OPTARG
+	-r|--run)
 		echo "Running $PACKAGE..."
 		echo "Stopping existing package"
 		$ADB shell am force-stop $PACKAGE
 		sleep 1
 		echo "Starting new instance of package"
 		$ADB shell am start -n $PACKAGE/com.unity3d.player.UnityPlayerActivity
+		shift
 		;;
-	p)
+	--list)
 		# show 3rd party packages installed
 		$ADB shell pm list packages -3
+		shift
 		;;
-	c)
+	-c|--cmd)
 		# user command
-		shift 1
+		shift
 		$ADB $*
+		break
 		;;
-	l)	
+	-l|--log)
 		echo "Capture log"
 		$ADB logcat -s Unity > $LOGFILE
+		shift
 		;;
-	b)	
+	--side)
+	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
+		echo "Use SideQuest ADB"
+		shift
+		;;
+	--bare)	
 		if ! $(command_exists baretail); then
 			colecho -red "Error: Baretail is not in the path."
 			exit 1
 		fi
 		echo "Starting Baretail..."
 		exec baretail $(cygpath -w $LOGFILE) &  # https://baremetalsoft.com/baretail/
+		shift
 		;;
 	*) 	
-		echo "Unknown option"
+		colecho -red "Unknown option: $1" >&2
 	  	exit 2
 	  	;;
 	esac
