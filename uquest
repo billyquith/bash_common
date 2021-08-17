@@ -26,7 +26,8 @@ usage () {
 	-u PKG      uninstall package from device
 	-r PKG      run package app on device
 	--list      list installed packages
-	-l          capture app log output in $LOGFILE
+	-l [OPTS]   capture app log output in $LOGFILE
+	              all   show all output
 	-c CMDS     call ADB with the given commands
 
 	--bare      start Baretail following the log
@@ -41,10 +42,13 @@ EOM
 if [ ! -f ~/$CONFIGFILE ]; then
 	cat > ~/$CONFIGFILE <<EOM
 # uquest config file - change these values as appropriate for your environment
+
 # Where Unity installs go
 #UNITY_INSTALL=/cygdrive/c/Unity
+
 # Default Unity version to use
 #UNITY_PATH=UNITY_INSTALL/2019.4.25f
+
 # Global ADB path to use.
 #ADB_PATH=
 EOM
@@ -53,10 +57,13 @@ fi
 if [ ! -f ./$CONFIGFILE ]; then
 	cat > ./$CONFIGFILE <<EOM
 # uquest config file - change these values as appropriate for your environment
+
 # Unity install to use
 #UNITY_PATH=$UNITY_INSTALL/2019.4.25f
+
 # ADB path to use. If blacnk & UNITY_PATH set, uses Unity adb.
 #ADB_PATH=
+
 # APK=
 # PACKAGE=
 EOM
@@ -140,7 +147,6 @@ while [ $# -ne 0 ]; do
 		shift
 		;;
 	-u|--uninstall)
-		PACKAGE=$OPTARG
 		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
 		echo "Uninstalling $PACKAGE..."
@@ -169,8 +175,17 @@ while [ $# -ne 0 ]; do
 		;;
 	-l|--log)
 		echo "Capture log"
-		$ADB logcat -s Unity > $LOGFILE
 		shift
+		OPTS="Unity:V OVRPlatform:D *:S" # Just Unity & some platform messages
+		while [ $# -ne 0 ]; do
+			case $1 in
+			all) OPTS="" ;; # no filters
+			-*) break ;;
+			*) echoecho -red "Unrecognised arg for log: $1"
+			esac
+			shift
+		done
+		$ADB logcat "$OPTS" > $LOGFILE
 		;;
 	--side)
 	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
