@@ -16,6 +16,8 @@ APK=
 PACKAGE=
 # path of adb to use
 ADB=
+# activity to run the package
+ACTIVITY=com.unity3d.player.UnityPlayerActivity
 
 usage () {
 	colecho -white "  $(basename $0) [-hbsiulrc] [PACKAGE.apk]"
@@ -25,10 +27,13 @@ usage () {
 	-i [APK]    install package to device
 	-u PKG      uninstall package from device
 	-r PKG      run package app on device
-	--list      list installed packages
 	-l [OPTS]   capture app log output in $LOGFILE
 	              all   show all output
 	-c CMDS     call ADB with the given commands
+
+	--list      list installed packages
+	--dump		dump installed package info
+	--act		get run activity for package
 
 	--bare      start Baretail following the log
 	--side      use SideQuest ADB
@@ -61,11 +66,12 @@ if [ ! -f ./$CONFIGFILE ]; then
 # Unity install to use
 #UNITY_PATH=$UNITY_INSTALL/2019.4.25f
 
-# ADB path to use. If blacnk & UNITY_PATH set, uses Unity adb.
+# ADB path to use. If blank & UNITY_PATH set, uses Unity adb.
 #ADB_PATH=
 
 # APK=
 # PACKAGE=
+# ACTIVITY=com.unity3d.player.UnityPlayerActivity
 EOM
 fi
 
@@ -132,6 +138,7 @@ while [ $# -ne 0 ]; do
 		colecho -yellow "    Adb found: " -grey "$ADB_HOW"
 		colecho -yellow "    APK=" -grey "${APK:-"*unset*"}"
 		colecho -yellow "    PACKAGE=" -grey "${PACKAGE:-"*unset*"}"
+		colecho -yellow "    ACTIVITY=" -grey "${ACTIVITY:-"*unset*"}"
 		shift
 		;;
 	-i|--install)
@@ -164,7 +171,19 @@ while [ $# -ne 0 ]; do
 		;;
 	--list)
 		# show 3rd party packages installed
+		colecho -yellow "Packages"
 		$ADB shell pm list packages -3
+		shift
+		;;
+	--dump)
+		# dump all package info
+		$ADB shell pm dump $PACKAGE
+		shift
+		;;
+	--act)
+		colecho -yellow "Activity in installed package $PACKAGE:"
+		# Get the launcher activity https://stackoverflow.com/a/41325792/3233
+		$ADB shell "cmd package resolve-activity --brief $PACKAGE | tail -n 1"
 		shift
 		;;
 	-c|--cmd)
