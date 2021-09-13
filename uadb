@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run a Unity compiled Oculus Quest app using adb.
+# Android application support for Unity
 # 	= config files in ~ & .
 # 	- Captures log.
 # ADB docs: https://developer.android.com/studio/command-line/adb
 
-CONFIGFILE=.uquest
+CONFIGFILE=.uadb
 LOGFILE=adblog.txt
 BUILDLOG=Build.log # Unity build output log
 UNITY_ADB_PATH=Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb
@@ -17,13 +17,20 @@ PACKAGE=
 # path of adb to use
 ADB=
 # activity to run the package
-ACTIVITY=com.unity3d.player.UnityPlayerActivity
+ACTIVITY=
+# logcat filter
+LOGOPTS=all
+# VR platform
+VRPLATFORM=
+VRSUPPORTED='ovr|wave'
+
 
 usage () {
 	colecho -white "  $(basename $0) [-hbsiulrc] [PACKAGE.apk]"
 	cat <<EOM
  
 	-h          help
+	-p          platform [$VRSUPPORTED]
 	-i [APK]    install package to device
 	-u PKG      uninstall package from device
 	-r PKG      run package app on device
@@ -38,7 +45,7 @@ usage () {
 	--bare      start Baretail following the log
 	--side      use SideQuest ADB
 
-	e.g. run & log:	uquest -r -l
+	e.g. run & log:	uadb -r -l
 
 	ADB docs: https://developer.android.com/studio/command-line/adb
 EOM
@@ -46,32 +53,39 @@ EOM
 
 if [ ! -f ~/$CONFIGFILE ]; then
 	cat > ~/$CONFIGFILE <<EOM
-# uquest config file - change these values as appropriate for your environment
+# uadb config file - change these values as appropriate for your environment
 
 # Where Unity installs go
 #UNITY_INSTALL=/cygdrive/c/Unity
 
 # Default Unity version to use
-#UNITY_PATH=UNITY_INSTALL/2019.4.25f
+#UNITY_PATH=$UNITY_INSTALL/2019.4.25f1
 
 # Global ADB path to use.
-#ADB_PATH=
+#ADB=
 EOM
 fi
 
 if [ ! -f ./$CONFIGFILE ]; then
 	cat > ./$CONFIGFILE <<EOM
-# uquest config file - change these values as appropriate for your environment
+# uadb config file - change these values as appropriate for your environment
 
 # Unity install to use
-#UNITY_PATH=$UNITY_INSTALL/2019.4.25f
+#UNITY_PATH=$UNITY_INSTALL/2019.4.25f1
 
 # ADB path to use. If blank & UNITY_PATH set, uses Unity adb.
-#ADB_PATH=
+#ADB=
 
-# APK=
-# PACKAGE=
-# ACTIVITY=com.unity3d.player.UnityPlayerActivity
+#APK=
+#PACKAGE=
+
+ACTIVITY_ovr=com.unity3d.player.UnityPlayerActivity
+ACTIVITY_wave=com.htc.vr.unity.WVRUnityVRActivity
+ACTIVITY=$ACTIVITY_ovr  # default
+
+LOGOPTS_ovr="Unity:V OVRPlatform:D *:S"
+LOGOPTS_wave="Unity:V VRCORE:D *:S"
+LOGOPTS=$LOGOPTS_ovr  # default
 EOM
 fi
 
@@ -85,7 +99,7 @@ ADB_HOW="From $CONFIGFILE config"
 if [ -z $ADB ]; then
 	#colecho -cyan "ADB_PATH unset. Trying to determine path."
 	if [ -z $UNITY_PATH ]; then
-		colecho -red "UNITY_PATH not set in .uquest config"
+		colecho -red "UNITY_PATH not set in $CONFIGFILE config"
 	else
 		if [ ! -d $UNITY_PATH ]; then
 			colecho -red "No Unity install at UNITY_PATH=$UNITY_PATH"
@@ -141,6 +155,18 @@ while [ $# -ne 0 ]; do
 		colecho -yellow "    ACTIVITY=" -grey "${ACTIVITY:-"*unset*"}"
 		shift
 		;;
+	-p|--platform)
+		shift
+		if [[ "|$VRSUPPORTED|" =~ "|$1|" ]]; then
+			VRPLATFORM=$1
+			ACTIVITY=ACTIVITY_$VRPLATFORM; ACTIVITY=${!ACTIVITY}
+			LOGOPTS=LOGOPTS_$VRPLATFORM; LOGOPTS=${!LOGOPTS}
+		else
+			colecho -red "Unrecognised platform: $1"
+			exit 1
+		fi
+		shift
+		;;
 	-i|--install)
 		$ADB devices
 		PKG=$APK
@@ -193,9 +219,8 @@ while [ $# -ne 0 ]; do
 		break
 		;;
 	-l|--log)
-		echo "Capture log"
 		shift
-		OPTS="Unity:V OVRPlatform:D *:S" # Just Unity & some platform messages
+		OPTS="$LOGOPTS"
 		while [ $# -ne 0 ]; do
 			case $1 in
 			all) OPTS="" ;; # no filters
@@ -204,6 +229,7 @@ while [ $# -ne 0 ]; do
 			esac
 			shift
 		done
+		echo "Capture log ($OPTS)"
 		$ADB logcat "$OPTS" > $LOGFILE
 		;;
 	--side)
