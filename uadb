@@ -39,8 +39,8 @@ usage () {
 	-c CMDS     call ADB with the given commands
 
 	--list      list installed packages
-	--dump		dump installed package info
-	--act		get run activity for package
+	--dump      dump installed package info
+	--act       get run activity for package
 
 	--bare      start Baretail following the log
 	--side      use SideQuest ADB
@@ -187,12 +187,12 @@ while [ $# -ne 0 ]; do
 		shift
 		;;
 	-r|--run)
-		echo "Running $PACKAGE..."
+		colecho -purple "Running $ACTIVITY..."
 		echo "Stopping existing package"
 		$ADB shell am force-stop $PACKAGE
 		sleep 1
 		echo "Starting new instance of package"
-		$ADB shell am start -n $PACKAGE/com.unity3d.player.UnityPlayerActivity
+		$ADB shell am start -a $ACTIVITY
 		shift
 		;;
 	--list)
@@ -225,7 +225,7 @@ while [ $# -ne 0 ]; do
 			case $1 in
 			all) OPTS="" ;; # no filters
 			-*) break ;;
-			*) echoecho -red "Unrecognised arg for log: $1"
+			*) OPTS="$OPTS $1"
 			esac
 			shift
 		done
