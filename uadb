@@ -5,6 +5,8 @@
 # ADB docs: https://developer.android.com/studio/command-line/adb
 
 CONFIGFILE=.uadb
+HOMECONFIG=~/$CONFIGFILE
+LOCALCONFIG=./$CONFIGFILE
 LOGFILE=adblog.txt
 BUILDLOG=Build.log # Unity build output log
 UNITY_ADB_PATH=Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb
@@ -20,23 +22,22 @@ ADB=
 ACTIVITY=
 # logcat filter
 LOGOPTS=all
-# VR platform
-VRPLATFORM=
-VRSUPPORTED='ovr|wave'
 
 
 usage () {
-	colecho -white "  $(basename $0) [-hbsiulrc] [PACKAGE.apk]"
+	colecho -white "  $(basename $0) [-c CONFIG] [-hbsiulr]"
 	cat <<EOM
+	loads .uadb_CONFIG file and runs command.
+	APK, packaged, Unity build are specified in config.
+	Use multiple configs for diffent apps and devices.
  
 	-h          help
-	-p          platform [$VRSUPPORTED]
-	-i [APK]    install package to device
-	-u PKG      uninstall package from device
-	-r PKG      run package app on device
+	-i          install package to device
+	-u          uninstall package from device
+	-r          run package app on device
 	-l [OPTS]   capture app log output in $LOGFILE
 	              all   show all output
-	-c CMDS     call ADB with the given commands
+	--cmd CMDS  call ADB with the given commands
 
 	--list      list installed packages
 	--dump      dump installed package info
@@ -51,23 +52,36 @@ usage () {
 EOM
 }
 
-if [ ! -f ~/$CONFIGFILE ]; then
-	cat > ~/$CONFIGFILE <<EOM
+# -c NAME  -- use a config name
+if [ $1 = -c ]; then
+	shift
+	if [[ $1 == -* ]]; then
+		colecho -red "Error: no config given"; exit 1
+	else
+		LOCALCONFIG=${LOCALCONFIG}_$1
+		shift
+	fi
+fi
+
+if [ ! -f $HOMECONFIG ]; then
+	echo "Creating $HOMECONFIG"
+	cat > $HOMECONFIG <<EOM
 # uadb config file - change these values as appropriate for your environment
 
 # Where Unity installs go
 #UNITY_INSTALL=/cygdrive/c/Unity
 
 # Default Unity version to use
-#UNITY_PATH=$UNITY_INSTALL/2019.4.25f1
+#UNITY_PATH=$UNITY_INSTALL/2020.3.22f1
 
 # Global ADB path to use.
 #ADB=
 EOM
 fi
 
-if [ ! -f ./$CONFIGFILE ]; then
-	cat > ./$CONFIGFILE <<EOM
+if [ ! -f $LOCALCONFIG ]; then
+	echo "Creating $LOCALCONFIG"
+	cat > $LOCALCONFIG <<EOM
 # uadb config file - change these values as appropriate for your environment
 
 # Unity install to use
@@ -76,21 +90,24 @@ if [ ! -f ./$CONFIGFILE ]; then
 # ADB path to use. If blank & UNITY_PATH set, uses Unity adb.
 #ADB=
 
+# APK package to use, eg. com.company.app.apk
 #APK=
+
+# Package, if different from APK, eg. com.company.myapp
 #PACKAGE=
 
-ACTIVITY_ovr=com.unity3d.player.UnityPlayerActivity
-ACTIVITY_wave=com.htc.vr.unity.WVRUnityVRActivity
-ACTIVITY=$ACTIVITY_ovr  # default
+# eg. com.unity3d.player.UnityPlayerActivity
+ACTIVITY=
 
-LOGOPTS_ovr="Unity:V OVRPlatform:D *:S"
-LOGOPTS_wave="Unity:V VRCORE:D *:S"
-LOGOPTS=$LOGOPTS_ovr  # default
+# eg. OVR  LOGOPTS="Unity:V OVRPlatform:D *:S"
+#	  Wave LOGOPTS="Unity:V VRCORE:D *:S"
+LOGOPTS=
+
 EOM
 fi
 
-source ~/$CONFIGFILE
-source ./$CONFIGFILE
+source $HOMECONFIG
+source $LOCALCONFIG
 
 ADB=$ADB_PATH
 ADB_HOW="From $CONFIGFILE config"
@@ -146,6 +163,7 @@ while [ $# -ne 0 ]; do
 	-h|--help)
 		usage
 		echo
+		colecho -cyan   "    CONFIG=" -grey "$HOMECONFIG / $LOCALCONFIG"
 		colecho -yellow "    UNITY_INSTALL=" -grey "${UNITY_INSTALL:-"*unset*"}"
 		colecho -yellow "    UNITY_PATH=" -grey "${UNITY_PATH:-"*unset*"}"
 		colecho -yellow "    ADB=" -grey "${ADB:-"*not found*"}"
@@ -155,30 +173,16 @@ while [ $# -ne 0 ]; do
 		colecho -yellow "    ACTIVITY=" -grey "${ACTIVITY:-"*unset*"}"
 		shift
 		;;
-	-p|--platform)
-		shift
-		if [[ "|$VRSUPPORTED|" =~ "|$1|" ]]; then
-			VRPLATFORM=$1
-			ACTIVITY=ACTIVITY_$VRPLATFORM; ACTIVITY=${!ACTIVITY}
-			LOGOPTS=LOGOPTS_$VRPLATFORM; LOGOPTS=${!LOGOPTS}
-		else
-			colecho -red "Unrecognised platform: $1"
-			exit 1
-		fi
-		shift
-		;;
 	-i|--install)
 		$ADB devices
 		shift
-		if [[ $1 == *.apk ]]; then
-			APK=$1	# -i <name>.apk 
-			shift
-		fi
 		if [ -z $APK ] || [ ! -f $APK ]; then
 			colecho -red "Error: Package $APK not found" >&2
 			exit 1
 		fi
-		PACKAGE=$(get_package $APK)
+		if [[ -z $PACKAGE ]]; then
+			PACKAGE=$(get_package $APK)
+		fi
 		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
 		echo "Installing $APK"
@@ -217,7 +221,7 @@ while [ $# -ne 0 ]; do
 		$ADB shell "cmd package resolve-activity --brief $PACKAGE | tail -n 1"
 		shift
 		;;
-	-c|--cmd)
+	--cmd)
 		# user command
 		shift
 		$ADB $*
