@@ -169,15 +169,20 @@ while [ $# -ne 0 ]; do
 		;;
 	-i|--install)
 		$ADB devices
-		PKG=$APK
-		if [ -z $PKG ] || [ ! -f $PKG ]; then
-			colecho -red "Error: Package $PKG not found" >&2
+		shift
+		if [[ $1 == *.apk ]]; then
+			APK=$1	# -i <name>.apk 
+			shift
 		fi
+		if [ -z $APK ] || [ ! -f $APK ]; then
+			colecho -red "Error: Package $APK not found" >&2
+			exit 1
+		fi
+		PACKAGE=$(get_package $APK)
 		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
-		echo "Installing $PKG"
-		$ADB install -r $PKG
-		shift
+		echo "Installing $APK"
+		$ADB install -r $APK
 		;;
 	-u|--uninstall)
 		echo "Stopping $PACKAGE"
