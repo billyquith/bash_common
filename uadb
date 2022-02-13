@@ -196,12 +196,15 @@ while [ $# -ne 0 ]; do
 		shift
 		;;
 	-r|--run)
-		colecho -purple "Running $ACTIVITY..."
-		echo "Stopping existing package"
+		colecho -purple "Running $PACKAGE/$ACTIVITY..."
+		# echo "Stopping existing package"
 		$ADB shell am force-stop $PACKAGE
 		sleep 1
-		echo "Starting new instance of package"
-		$ADB shell am start -a $ACTIVITY
+		# adb intent: https://developer.android.com/studio/command-line/adb#IntentSpec
+		#INTENT=android.intent.action.MAIN
+		#colecho -purple "Starting intent $INTENT"
+		#$ADB shell am start -a $INTENT
+		$ADB shell am start $PACKAGE/$ACTIVITY
 		shift
 		;;
 	--list)
@@ -239,6 +242,7 @@ while [ $# -ne 0 ]; do
 			shift
 		done
 		echo "Capture log ($OPTS)"
+		rm $LOGFILE
 		$ADB logcat "$OPTS" > $LOGFILE
 		;;
 	--side)
