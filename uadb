@@ -7,6 +7,7 @@
 CONFIGFILE=.uadb
 HOMECONFIG=~/$CONFIGFILE
 LOCALCONFIG=./$CONFIGFILE
+CONFIGMODE=./${CONFIGFILE}mode
 LOGFILE=adblog.txt
 BUILDLOG=Build.log # Unity build output log
 UNITY_ADB_PATH=Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb
@@ -27,9 +28,10 @@ LOGOPTS=all
 usage () {
 	colecho -white "  $(basename $0) [-c CONFIG] [-hbsiulr]"
 	cat <<EOM
-	loads .uadb_CONFIG file and runs command.
+	Loads .uadb_CONFIG file and runs command.
 	APK, packaged, Unity build are specified in config.
 	Use multiple configs for diffent apps and devices.
+	Config is modal once set, use -c to change.
  
 	-h          help
 	-i          install package to device
@@ -59,8 +61,17 @@ if [ $1 = -c ]; then
 		colecho -red "Error: no config given"; exit 1
 	else
 		LOCALCONFIG=${LOCALCONFIG}_$1
+		# remember config
+		echo LOCALCONFIG=$LOCALCONFIG > $CONFIGMODE
 		shift
 	fi
+fi
+
+if [ -f $CONFIGMODE ]; then
+	source $CONFIGMODE
+else
+	colecho -red "Error: please set config (-c)"
+	exit 1
 fi
 
 if [ ! -f $HOMECONFIG ]; then
@@ -108,6 +119,7 @@ fi
 
 source $HOMECONFIG
 source $LOCALCONFIG
+
 
 ADB=$ADB_PATH
 ADB_HOW="From $CONFIGFILE config"
@@ -163,14 +175,15 @@ while [ $# -ne 0 ]; do
 	-h|--help)
 		usage
 		echo
-		colecho -cyan   "    CONFIG=" -grey "$HOMECONFIG / $LOCALCONFIG"
-		colecho -yellow "    UNITY_INSTALL=" -grey "${UNITY_INSTALL:-"*unset*"}"
-		colecho -yellow "    UNITY_PATH=" -grey "${UNITY_PATH:-"*unset*"}"
-		colecho -yellow "    ADB=" -grey "${ADB:-"*not found*"}"
+		colecho -cyan   "    Global config = " -grey "$HOMECONFIG"
+		colecho -cyan   "    Config mode   = " -grey "$LOCALCONFIG"
+		colecho -yellow "    UNITY_INSTALL = " -grey "${UNITY_INSTALL:-"*unset*"}"
+		colecho -yellow "    UNITY_PATH    = " -grey "${UNITY_PATH:-"*unset*"}"
+		colecho -yellow "    ADB           = " -grey "${ADB:-"*not found*"}"
 		colecho -yellow "    Adb found: " -grey "$ADB_HOW"
-		colecho -yellow "    APK=" -grey "${APK:-"*unset*"}"
-		colecho -yellow "    PACKAGE=" -grey "${PACKAGE:-"*unset*"}"
-		colecho -yellow "    ACTIVITY=" -grey "${ACTIVITY:-"*unset*"}"
+		colecho -yellow "    APK           = " -grey "${APK:-"*unset*"}"
+		colecho -yellow "    PACKAGE       = " -grey "${PACKAGE:-"*unset*"}"
+		colecho -yellow "    ACTIVITY      = " -grey "${ACTIVITY:-"*unset*"}"
 		shift
 		;;
 	-i|--install)
