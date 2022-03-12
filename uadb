@@ -45,6 +45,8 @@ usage () {
 	--dump      dump installed package info
 	--act       get run activity for package
 
+	--apkmanifest  use apk-analyzer to show package manifest
+
 	--bare      start Baretail following the log
 	--side      use SideQuest ADB
 
@@ -196,9 +198,10 @@ while [ $# -ne 0 ]; do
 		if [[ -z $PACKAGE ]]; then
 			PACKAGE=$(get_package $APK)
 		fi
+		ls -l $APK
 		echo "Stopping $PACKAGE"
 		$ADB shell am force-stop $PACKAGE
-		echo "Installing $APK"
+		colecho -purple "Installing $APK"
 		$ADB install -r $APK
 		;;
 	-u|--uninstall)
@@ -210,14 +213,11 @@ while [ $# -ne 0 ]; do
 		;;
 	-r|--run)
 		colecho -purple "Running $PACKAGE/$ACTIVITY..."
-		# echo "Stopping existing package"
-		$ADB shell am force-stop $PACKAGE
-		sleep 1
 		# adb intent: https://developer.android.com/studio/command-line/adb#IntentSpec
-		#INTENT=android.intent.action.MAIN
-		#colecho -purple "Starting intent $INTENT"
-		#$ADB shell am start -a $INTENT
-		$ADB shell am start $PACKAGE/$ACTIVITY
+		INTENT=android.intent.action.MAIN
+		colecho -purple "Starting intent $INTENT"
+		# Note: we are adding "unityeditor" to the package name here.
+		$ADB -d shell am start -a $INTENT -c android.intent.category.LAUNCHER -S ${PACKAGE}unityeditor/$ACTIVITY
 		shift
 		;;
 	--list)
@@ -257,6 +257,15 @@ while [ $# -ne 0 ]; do
 		echo "Capture log ($OPTS)"
 		rm $LOGFILE
 		$ADB logcat "$OPTS" > $LOGFILE
+		;;
+	--apkmanifest)
+		shift
+		APK_ANALYZER_PATH=$UNITY_PATH/Editor/Data/PlaybackEngines/AndroidPlayer/SDK/tools/bin/apkanalyzer
+		if [ ! -e $APK_ANALYZER_PATH ]; then
+			colecho -red "APK analyser does not exist at $APK_APK_ANALYZER_PATH"
+			exit 1
+		fi
+		$APK_ANALYZER_PATH manifest print $APK
 		;;
 	--side)
 	  	ADB=$(cygpath -u "$HOMEPATH\AppData\Roaming\SideQuest\platform-tools\adb.exe")
