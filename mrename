@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""
+mrename -v 'The Wire \[1x(\d+)\] (.+)\.(\w+)' '${2} S01E${1}.${3}'
+"""
+
+import os
+import sys
+import re
+import argparse
+import glob
+import logging
+import codecs
+import platform
+
+logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
+LOG = logging.getLogger(__name__)
+VERBOSE = False
+INDIR = '.'
+
+IS_POSIX = platform.system() in ('Darwin',)
+
+
+def unescaped_str(arg_str):
+    return codecs.decode(str(arg_str), 'unicode_escape')
+
+
+class SubstString:
+    def __init__(self):
+        # ${...}
+        self._re_subst = re.compile(r'\$\{(\d+)\}')
+    
+    def prep_input(self, re_str_in):
+        """ Prepare the input. """
+        try:
+            self._re_in = re.compile(re_str_in, re.DOTALL)
+        except re.error as e:
+            LOG.error(str(e))
+            sys.exit(1)
+        
+    def match_input(self, str_in):
+        self._str_in = str_in
+        self._match = self._re_in.match(str_in)
+        self._result = None
+        return self._match != None
+        
+    def calc_output(self, str_out):
+        m_in = self._match.groups()
+        
+        def repl_var(m_out):
+            subst_var = m_out.group(1)
+            vn = int(subst_var)
+            return m_in[vn - 1]
+    
+        self._str_out = self._re_subst.sub(repl_var, str_out)
+        return self._str_out
+            
+        
+class OutFile:
+    def __init__(self):
+        self.cmds = []
+        if IS_POSIX:
+            self.cmds += ['#!/usr/bin/env bash', '']
+            
+    def rename(self, fn_from, fn_to):
+        if IS_POSIX:
+            self.cmds.append('mv "{0}" "{1}"'.format(fn_from, fn_to))
+            
+    def write(self, outfile):
+        try:
+            with open(outfile, 'w') as fh:
+                fh.write('\n'.join(self.cmds))
+        except IOError as e:
+            LOG.error(str(e))
+
+
+def main():
+    parser = argparse.ArgumentParser(description='File renaming using regex')
+    parser.add_argument('input', type=str, help='regex input')
+    parser.add_argument('output', type=str, help='${...}')
+    parser.add_argument('-d', '--dry', dest='verbose', action='store_true')
+    parser.add_argument('-v', '--verbose', action='store_true')
+    parser.add_argument('-o', '--outfile', type=str, default='rename.sh')
+    args = parser.parse_args()
+    
+    if args.verbose:
+        LOG.setLevel(logging.DEBUG)
+        
+    fn_in = args.input
+    fn_out = args.output
+    indir = INDIR
+    outfile = args.outfile
+    
+    LOG.debug('Input: <{0}>'.format(fn_in))
+    LOG.debug('Output: <{0}>'.format(fn_out))
+        
+    files = os.listdir(indir)
+    files.sort()
+    LOG.info('{0} files found in {1}'.format(len(files), indir))
+
+    ss = SubstString()
+    ss.prep_input(fn_in)
+    
+    cmds = OutFile()
+    
+    for i, fn in enumerate(files):
+        LOG.debug('Filename: {0:03} {1}'.format(i, fn))
+        if ss.match_input(fn):            
+            fn_subst = ss.calc_output(fn_out)
+    
+            LOG.info('{0} --> {1}'.format(fn, fn_subst))
+            cmds.rename(fn, fn_subst)
+    
+    cmds.write(outfile)
+    LOG.info('Wrote commands to {0}'.format(outfile))
+
+main()
+
