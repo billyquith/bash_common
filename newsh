@@ -17,6 +17,32 @@ cat << 'EOF' >> "$FNAME"
 
 SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
 
+FILE=$1
+OUT=${FILE%.*}_.mp4
+
+usage() {
+  echo "Usage: $0 [-i] [-c] VIDEO"
+}
+
+# getopt "x" no-arg, "x:" required arg, "x::" optional arg
+while getopts "ic" OPT; do
+  case "${OPT}" in
+    i)
+      echo "$FILE"
+      shift
+      ;;
+    c)
+      blah
+      shift
+      ;;
+    *) usage ;;
+  esac
+done
+
+shift "$((OPTIND-1))"
+
+ARGS=$@
+
 EOF
 
 chmod u+x "$FNAME"
