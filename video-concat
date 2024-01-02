@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Join videos of same format and size.
+# See https://stackoverflow.com/a/11175851
+# See https://trac.ffmpeg.org/wiki/Concatenate
+
+SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
+FILES=$(basename $0).tmp.txt
+echo > $FILES
+OUTPUT=output.mp4
+
+usage() {
+  echo "Usage: $0 [-i VIDEO]... [-o OUTPUT]"
+  echo "\tJoin videos of same format and size"
+}
+
+echo "Concatenating files..."
+while getopts "i:o:h" OPT; do
+  case "${OPT}" in
+    i)
+      echo "Adding $OPTARG"
+      echo "file '$OPTARG'" >> $FILES
+      ;;
+    -o)
+      echo "Output file $OPTARG"
+      OUTPUT=$OPTARG
+      ;;      
+    h|*)
+      usage
+      exit 0
+      ;;
+  esac
+done
+
+shift "$((OPTIND-1))"
+ARGS=$@
+
+cat $FILES
+
+ffmpeg -f concat -safe 0 -i "$FILES" -vcodec libx264 -acodec aac $OUTPUT

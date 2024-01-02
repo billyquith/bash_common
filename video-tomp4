@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+
+FILE=$1
+OUT=${FILE%.*}_.mp4
+
+usage() {
+  echo "Usage: $0 [-i] [-c] VIDEO"
+  echo "\t-i\tshow media info"
+  echo "\t-c\tconvert to H264 MP4"
+}
+
+while getopts "ic" OPT; do
+  case "${OPT}" in
+    i)
+      mediainfo "$FILE"
+      shift
+      ;;
+    c)
+      ffmpeg -i "$FILE" -vcodec libx264 -acodec aac "$OUT"
+      shift
+      ;;
+    *) usage ;;
+  esac
+done
+
+
+
