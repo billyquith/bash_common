@@ -28,21 +28,21 @@ initialising to add things like environment variables, paths, and completions.
 
 ```bash
     cd
-    git clone https://github.com/billyquith/bash_common.git
+    git clone https://github.com/billyquith/bash_common.git .bash_common
 ```
 
 Source the bash_common `.profile` and `.bashrc` from your home ones. In `~/.bash_profile` 
 source `bash_common/.profile` and make sure your `.bashrc` is sourced:
 
 ```bash
-[ -f ~/bash_common/.profile ] && source ~/bash_common/.profile  # source bash_commmon profile
+[ -f ~/.bash_common/.profile ] && source ~/.bash_common/.profile  # source bash_commmon profile
 [ -f ~/.bashrc ] && source ~/.bashrc                            # ensure .bashrc sourced
 ```
 
 In your `~/.bashrc` ensure that `bash_common/.bashrc` is sourced:
 
 ```bash
-[ -f ~/bash_common/.bashrc ] && source ~/bash_common/.bashrc
+[ -f ~/.bash_common/.bashrc ] && source ~/.bash_common/.bashrc
 ```
 
 ## Environment
