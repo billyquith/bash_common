@@ -37,39 +37,39 @@ Dependencies: `ffmpeg` and `ffprobe` must be on PATH. Run `bcinit` to install.
   
 ## Installing
 
-Clone/download to a directory (`~/bash_common` in this example). bash_common needs
-initialising to add things like environment variables, paths, and completions.
+Clone to `~/.bash_common` (the dot prefix keeps it hidden, consistent with other dot-files
+in your home directory):
 
 ```bash
-    cd
-    git clone https://github.com/billyquith/bash_common.git
+cd
+git clone https://github.com/billyquith/bash_common.git .bash_common
 ```
 
 After cloning, run `bcinit` to check and install all dependencies (ffmpeg, python3,
 mediainfo, wget, and required Python packages):
 
 ```bash
-    ~/bash_common/bcinit
+~/.bash_common/bcinit
 ```
 
 Pass `-c` to check without installing:
 
 ```bash
-    ~/bash_common/bcinit -c
+~/.bash_common/bcinit -c
 ```
 
 Source the bash_common `.profile` and `.bashrc` from your home ones. In `~/.bash_profile`
-source `bash_common/.profile` and make sure your `.bashrc` is sourced:
+source `.bash_common/.profile` and make sure your `.bashrc` is sourced:
 
 ```bash
-[ -f ~/bash_common/.profile ] && source ~/bash_common/.profile  # source bash_commmon profile
-[ -f ~/.bashrc ] && source ~/.bashrc                            # ensure .bashrc sourced
+[ -f ~/.bash_common/.profile ] && source ~/.bash_common/.profile  # source bash_common profile
+[ -f ~/.bashrc ] && source ~/.bashrc                               # ensure .bashrc sourced
 ```
 
-In your `~/.bashrc` ensure that `bash_common/.bashrc` is sourced:
+In your `~/.bashrc` ensure that `.bash_common/.bashrc` is sourced:
 
 ```bash
-[ -f ~/bash_common/.bashrc ] && source ~/bash_common/.bashrc
+[ -f ~/.bash_common/.bashrc ] && source ~/.bash_common/.bashrc
 ```
 
 ## Platform Support

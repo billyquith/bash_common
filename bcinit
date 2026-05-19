@@ -31,6 +31,7 @@ esac
 
 MISSING_SYS=()
 MISSING_PY=()
+SHELL_CONFIG_WARNINGS=()
 
 check_sys() {
     local cmd=$1
@@ -49,6 +50,22 @@ check_py() {
     else
         colecho -red "  [missing] " -normal "python: $pkg"
         MISSING_PY+=("$pkg")
+    fi
+}
+
+check_shell_sources() {
+    # check_shell_sources FILE PATTERN "line to add if missing"
+    local file=$1
+    local pattern=$2
+    local suggestion=$3
+    if [ ! -f "$file" ]; then
+        colecho -red "  [missing] " -normal "$file does not exist"
+        SHELL_CONFIG_WARNINGS+=("Create $file and add: $suggestion")
+    elif grep -qF "$pattern" "$file" 2>/dev/null; then
+        colecho -green "  [ok] " -normal "$file sources $pattern"
+    else
+        colecho -ye "  [warn]  " -normal "$file — missing source for $pattern"
+        SHELL_CONFIG_WARNINGS+=("Add to $file:  $suggestion")
     fi
 }
 
@@ -96,13 +113,62 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Shell config check
+# ---------------------------------------------------------------------------
+
+echo ""
+colecho -white "Shell config (~/.bash_profile and ~/.bashrc):"
+
+# ~/.bash_login must not exist — it prevents ~/.bash_profile being read on some systems
+if [ -f "$HOME/.bash_login" ]; then
+    colecho -red "  [warn]  " -normal "~/.bash_login exists — this prevents ~/.bash_profile from loading"
+    SHELL_CONFIG_WARNINGS+=("Remove ~/.bash_login (or merge its contents into ~/.bash_profile)")
+else
+    colecho -green "  [ok] " -normal "~/.bash_login does not exist"
+fi
+
+# ~/.bash_profile must source bash_common .profile
+check_shell_sources \
+    "$HOME/.bash_profile" \
+    "$SCRIPTPATH/.profile" \
+    "[ -f $SCRIPTPATH/.profile ] && source $SCRIPTPATH/.profile"
+
+# ~/.bash_profile must source ~/.bashrc so interactive settings apply in login shells
+check_shell_sources \
+    "$HOME/.bash_profile" \
+    ".bashrc" \
+    "[ -f ~/.bashrc ] && source ~/.bashrc"
+
+# ~/.bashrc must source bash_common .bashrc
+check_shell_sources \
+    "$HOME/.bashrc" \
+    "$SCRIPTPATH/.bashrc" \
+    "[ -f $SCRIPTPATH/.bashrc ] && source $SCRIPTPATH/.bashrc"
+
+if [ ${#SHELL_CONFIG_WARNINGS[@]} -gt 0 ]; then
+    echo ""
+    colecho -ye "Shell config actions needed:"
+    for warn in "${SHELL_CONFIG_WARNINGS[@]}"; do
+        colecho -ye "  > " -normal "$warn"
+    done
+fi
+
+# ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
+if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ] && [ ${#SHELL_CONFIG_WARNINGS[@]} -eq 0 ]; then
+    echo ""
+    colecho -green "All dependencies satisfied and shell config looks good."
+    exit 0
+fi
+
+# Shell config warnings are always informational — they never block the dep install
 if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ]; then
     echo ""
     colecho -green "All dependencies satisfied."
-    exit 0
+    colecho -ye "Review shell config warnings above."
+    exit 1
 fi
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
