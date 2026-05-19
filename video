@@ -19,6 +19,7 @@ Run `video <subcommand> -h` for per-command help.
 """
 
 import argparse
+import configparser
 import datetime
 import json
 import logging
@@ -29,6 +30,34 @@ import tempfile
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
+
+BCCFG = os.path.expanduser("~/.bccfg")
+
+
+# ---------------------------------------------------------------------------
+# User config
+# ---------------------------------------------------------------------------
+
+def _load_config():
+    """Load ~/.bccfg/video.ini via configparser.
+
+    Returns a ConfigParser instance. If the file does not exist the instance
+    is empty and all get() calls will use their fallback values.
+    """
+    cfg = configparser.ConfigParser()
+    path = os.path.join(BCCFG, "video.ini")
+    if os.path.isfile(path):
+        cfg.read(path, encoding="utf-8")
+    return cfg
+
+
+# Loaded once at import time so all subcommands share the same instance
+_VIDEO_CFG = _load_config()
+
+
+def _vcfg(section, key, fallback):
+    """Return a value from video.ini [section]/key, falling back to *fallback*."""
+    return _VIDEO_CFG.get(section, key, fallback=fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -118,11 +147,15 @@ def cmd_convert(args):
     fmt = args.format.lower()
     output = args.output
 
+    # Per-format codec fallbacks; config overrides the default codecs for
+    # the non-webm formats where the user's video_codec/audio_codec apply.
+    vcodec_default = _vcfg("convert", "video_codec", "libx264")
+    acodec_default = _vcfg("convert", "audio_codec", "aac")
     codec_map = {
-        "mp4":  ("-vcodec", "libx264", "-acodec", "aac"),
-        "webm": ("-vcodec", "libvpx-vp9", "-acodec", "libopus"),
-        "mkv":  ("-vcodec", "libx264", "-acodec", "aac"),
-        "mov":  ("-vcodec", "libx264", "-acodec", "aac"),
+        "mp4":  (vcodec_default, acodec_default),
+        "mkv":  (vcodec_default, acodec_default),
+        "mov":  (vcodec_default, acodec_default),
+        "webm": ("libvpx-vp9",   "libopus"),
     }
     if fmt not in codec_map:
         sys.exit(f"Error: unsupported format '{fmt}'. Supported: {', '.join(codec_map)}")
@@ -130,8 +163,16 @@ def cmd_convert(args):
     if output is None:
         output = _default_output(args.file, f"_.{fmt}")
 
-    codecs = codec_map[fmt]
-    _run(["ffmpeg", "-i", args.file] + list(codecs) + [output])
+    vcodec, acodec = codec_map[fmt]
+    cmd = ["ffmpeg", "-i", args.file, "-vcodec", vcodec]
+
+    # Quality and preset only apply to libx264/libx265
+    if vcodec in ("libx264", "libx265"):
+        cmd += ["-crf",    _vcfg("convert", "video_crf",    "23")]
+        cmd += ["-preset", _vcfg("convert", "video_preset", "medium")]
+
+    cmd += ["-acodec", acodec, "-b:a", _vcfg("convert", "audio_bitrate", "128k"), output]
+    _run(cmd)
     print(f"Converted: {output}")
 
 
@@ -173,7 +214,7 @@ def cmd_trim(args):
 def cmd_thumb(args):
     _require("ffmpeg")
     output = args.output or _default_output(args.file, "_thumb.png")
-    timestamp = args.time or "00:00:01"
+    timestamp = args.time or _vcfg("thumb", "time", "00:00:01")
     _run([
         "ffmpeg",
         "-i", args.file,
@@ -429,9 +470,10 @@ def build_parser():
     p.add_argument("file", metavar="FILE")
 
     # convert
-    p = sub.add_parser("convert", help="transcode to a target format (default: H.264/AAC MP4)")
-    p.add_argument("-f", "--format", default="mp4", metavar="FORMAT",
-                   help="output format: mp4 (default), webm, mkv, mov")
+    default_fmt = _vcfg("convert", "default_format", "mp4")
+    p = sub.add_parser("convert", help=f"transcode to a target format (default from config: {default_fmt})")
+    p.add_argument("-f", "--format", default=default_fmt, metavar="FORMAT",
+                   help=f"output format: mp4, webm, mkv, mov (config default: {default_fmt})")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
     p.add_argument("file", metavar="FILE")
 

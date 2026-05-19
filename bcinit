@@ -4,7 +4,8 @@
 # Run once after cloning (and again after updates) to check and install
 # everything bash_common needs: system tools (ffmpeg, ffprobe, mediainfo,
 # wget, python3), Python packages (markdown2), bundled completion scripts
-# (git, brew, etc.), and shell config in ~/.bash_profile / ~/.bashrc.
+# (git, brew, etc.), shell config in ~/.bash_profile / ~/.bashrc, and
+# user config files in ~/.bccfg/.
 #
 # Usage: bcinit [-c] [-h]
 #   -c   check only; report what is missing without installing anything
@@ -44,6 +45,7 @@ esac
 MISSING_SYS=()
 MISSING_PY=()
 SHELL_CONFIG_WARNINGS=()
+BCCFG="$HOME/.bccfg"
 
 check_sys() {
     local cmd=$1
@@ -173,6 +175,24 @@ if [ ${#SHELL_CONFIG_WARNINGS[@]} -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# User config (~/.bccfg/)
+# ---------------------------------------------------------------------------
+
+echo ""
+colecho -white "User config ($BCCFG):"
+
+check_cfg() {
+    local file="$BCCFG/$1"
+    if [ -f "$file" ]; then
+        colecho -green "  [ok] " -normal "$file"
+    else
+        colecho -ye "  [missing] " -normal "$file (will be created with defaults)"
+    fi
+}
+
+check_cfg "video.ini"
+
+# ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
@@ -220,6 +240,64 @@ if [ ${#MISSING_PY[@]} -gt 0 ]; then
     colecho -white "Installing Python packages: ${MISSING_PY[*]}"
     python3 -m pip install "${MISSING_PY[@]}"
 fi
+
+# ---------------------------------------------------------------------------
+# User config files (~/.bccfg/)
+# ---------------------------------------------------------------------------
+
+echo ""
+colecho -white "Writing default user config files..."
+
+mkdir -p "$BCCFG"
+
+write_default_cfg() {
+    local file="$BCCFG/$1"
+    if [ -f "$file" ]; then
+        colecho -green "  [ok] " -normal "$file (exists, not overwritten)"
+    else
+        cat > "$file"   # content comes from a heredoc at each call site
+        colecho -green "  [created] " -normal "$file"
+    fi
+}
+
+write_default_cfg "video.ini" << 'VIDEOCFG'
+# bash_common video configuration (~/.bccfg/video.ini)
+# Loaded by the `video` command as default settings.
+# Edit these values to match your preferences.
+
+[convert]
+# Default container format when -f is not specified.
+# Supported: mp4, mkv, mov, webm
+default_format = mp4
+
+# Video codec.
+#   mp4 / mkv / mov : libx264 (H.264) or libx265 (H.265, smaller files, slower)
+#   webm            : libvpx-vp9
+video_codec = libx264
+
+# Encoding preset — trades encoding speed for compression efficiency.
+# Faster presets produce larger files at the same quality level.
+# Options: ultrafast superfast veryfast faster fast medium slow slower veryslow
+video_preset = medium
+
+# Constant Rate Factor — controls quality (lower = better quality, larger file).
+#   libx264 : 18 (high quality) to 28 (lower quality), sane default 23
+#   libx265 : 24–28 range, sane default 28
+video_crf = 23
+
+# Audio codec.
+#   mp4 / mkv / mov : aac or libmp3lame
+#   webm            : libopus
+audio_codec = aac
+
+# Audio bitrate.
+audio_bitrate = 128k
+
+[thumb]
+# Default timestamp for `video thumb` when -t is not specified.
+# Use HH:MM:SS or a value in seconds. A few seconds in avoids black frames.
+time = 00:00:05
+VIDEOCFG
 
 # ---------------------------------------------------------------------------
 # Bundled completion scripts
