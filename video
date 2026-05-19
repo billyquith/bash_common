@@ -3,20 +3,23 @@
 video - unified video tool backed by ffmpeg
 
 Subcommands:
-  info     FILE              print codec, resolution, duration, bitrate
-  convert  [-f FORMAT] [-o OUTPUT] FILE
-                             transcode to a target format (default: H.264/AAC MP4)
+  catalog  [-o OUTPUT] DIR
+                             scan a directory tree and write an HTML report
   concat   [-o OUTPUT] FILE...
                              join videos of the same format and resolution
-  trim     -s START -e END [-o OUTPUT] FILE
-                             cut to a time range (HH:MM:SS or seconds)
+  convert  [-f FORMAT] [-o OUTPUT] FILE
+                             transcode to a target format (default: H.264/AAC MP4)
+  info     FILE              print codec, resolution, duration, bitrate
   thumb    [-t TIME] [-o OUTPUT] FILE
                              extract a single frame as a PNG image
+  trim     -s START -e END [-o OUTPUT] FILE
+                             cut to a time range (HH:MM:SS or seconds)
 
 Run `video <subcommand> -h` for per-command help.
 """
 
 import argparse
+import datetime
 import json
 import logging
 import os
@@ -182,6 +185,233 @@ def cmd_thumb(args):
 
 
 # ---------------------------------------------------------------------------
+# Catalog helpers
+# ---------------------------------------------------------------------------
+
+VIDEO_EXTENSIONS = {
+    ".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v", ".wmv",
+    ".flv", ".mpg", ".mpeg", ".ts", ".mts", ".m2ts", ".3gp", ".ogv",
+}
+
+
+def _fmt_duration(secs):
+    secs = int(secs)
+    h, rem = divmod(secs, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def _fmt_size(nbytes):
+    for unit in ("B", "KB", "MB", "GB"):
+        if nbytes < 1024:
+            return f"{nbytes:.1f} {unit}"
+        nbytes /= 1024
+    return f"{nbytes:.1f} TB"
+
+
+def _fmt_fps(raw):
+    """Convert '30000/1001' style fraction to a clean decimal string."""
+    try:
+        num, den = raw.split("/")
+        fps = int(num) / int(den)
+        return f"{fps:.2f}".rstrip("0").rstrip(".")
+    except Exception:
+        return raw
+
+
+def _catalog_probe(full_path, rel_path):
+    """Probe one file and return a summary dict. Never raises."""
+    entry = {
+        "path": rel_path,
+        "size": os.path.getsize(full_path),
+        "error": None,
+        "format": "",
+        "duration": 0.0,
+        "bitrate": 0,
+        "video_codec": "",
+        "width": "",
+        "height": "",
+        "fps": "",
+        "audio_codec": "",
+        "channels": "",
+        "sample_rate": "",
+    }
+    try:
+        data = _probe(full_path)
+        fmt = data.get("format", {})
+        entry["format"] = fmt.get("format_name", "").split(",")[0]
+        entry["duration"] = float(fmt.get("duration") or 0)
+        entry["bitrate"] = int(fmt.get("bit_rate") or 0)
+        for stream in data.get("streams", []):
+            ctype = stream.get("codec_type")
+            if ctype == "video" and not entry["video_codec"]:
+                entry["video_codec"] = stream.get("codec_name", "")
+                entry["width"] = stream.get("width", "")
+                entry["height"] = stream.get("height", "")
+                entry["fps"] = _fmt_fps(stream.get("avg_frame_rate", ""))
+            elif ctype == "audio" and not entry["audio_codec"]:
+                entry["audio_codec"] = stream.get("codec_name", "")
+                entry["channels"] = stream.get("channels", "")
+                entry["sample_rate"] = stream.get("sample_rate", "")
+    except Exception as exc:
+        entry["error"] = str(exc)
+    return entry
+
+
+def _catalog_html(directory, entries):
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    abs_dir = os.path.abspath(directory)
+    total_size = sum(e["size"] for e in entries)
+    total_duration = sum(e["duration"] for e in entries)
+    errors = sum(1 for e in entries if e["error"])
+
+    rows = []
+    for e in entries:
+        err_cell = f'<td class="err" title="{e["error"]}">error</td>' if e["error"] else ""
+        resolution = f'{e["width"]}×{e["height"]}' if e["width"] else "—"
+        fps = e["fps"] or "—"
+        audio = f'{e["audio_codec"]} {e["channels"]}ch' if e["audio_codec"] else "—"
+        bitrate = f'{e["bitrate"] // 1000} kb/s' if e["bitrate"] else "—"
+        duration = _fmt_duration(e["duration"]) if e["duration"] else "—"
+        size = _fmt_size(e["size"])
+        video_cell = f'{e["video_codec"]}<br><span class="sub">{resolution} · {fps} fps</span>' if e["video_codec"] else "—"
+
+        cells = [
+            f'<td class="path" title="{e["path"]}">{e["path"]}</td>',
+            f'<td class="r">{size}</td>',
+            f'<td class="r">{duration}</td>',
+            f'<td>{e["format"]}</td>',
+            f'<td>{video_cell}</td>',
+            f'<td>{audio}</td>',
+            f'<td class="r">{bitrate}</td>',
+        ]
+        if e["error"]:
+            cells = [f'<td class="path err" colspan="7" title="{e["error"]}">{e["path"]} — probe error</td>']
+        rows.append(f'<tr>{"".join(cells)}</tr>')
+
+    rows_html = "\n".join(rows)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Catalog — {abs_dir}</title>
+<style>
+  * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          font-size: 13px; background: #f5f5f7; color: #1d1d1f; }}
+  header {{ background: #1d1d1f; color: #f5f5f7; padding: 20px 28px; }}
+  header h1 {{ font-size: 18px; font-weight: 600; }}
+  header p {{ font-size: 12px; color: #a1a1a6; margin-top: 4px; }}
+  .summary {{ display: flex; gap: 24px; padding: 16px 28px;
+              background: #fff; border-bottom: 1px solid #d2d2d7; flex-wrap: wrap; }}
+  .stat {{ display: flex; flex-direction: column; }}
+  .stat .val {{ font-size: 22px; font-weight: 600; }}
+  .stat .lbl {{ font-size: 11px; color: #6e6e73; margin-top: 2px; }}
+  .stat.warn .val {{ color: #c0392b; }}
+  .wrap {{ padding: 20px 28px; }}
+  table {{ width: 100%; border-collapse: collapse; background: #fff;
+           border-radius: 8px; overflow: hidden;
+           box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
+  thead th {{ background: #e8e8ed; padding: 8px 10px; text-align: left;
+              font-weight: 600; cursor: pointer; user-select: none;
+              white-space: nowrap; font-size: 12px; }}
+  thead th:hover {{ background: #d2d2d7; }}
+  thead th.r, td.r {{ text-align: right; }}
+  tbody tr:nth-child(even) {{ background: #fafafa; }}
+  tbody tr:hover {{ background: #eef4ff; }}
+  td {{ padding: 7px 10px; border-bottom: 1px solid #f0f0f0;
+        vertical-align: middle; max-width: 340px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  td.path {{ font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }}
+  td.err {{ color: #c0392b; font-style: italic; }}
+  .sub {{ font-size: 11px; color: #6e6e73; }}
+  footer {{ padding: 12px 28px; font-size: 11px; color: #6e6e73; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Video Catalog</h1>
+  <p>{abs_dir}</p>
+</header>
+<div class="summary">
+  <div class="stat"><span class="val">{len(entries)}</span><span class="lbl">Files</span></div>
+  <div class="stat"><span class="val">{_fmt_size(total_size)}</span><span class="lbl">Total size</span></div>
+  <div class="stat"><span class="val">{_fmt_duration(total_duration)}</span><span class="lbl">Total duration</span></div>
+  {"" if not errors else f'<div class="stat warn"><span class="val">{errors}</span><span class="lbl">Probe errors</span></div>'}
+</div>
+<div class="wrap">
+<table id="tbl">
+  <thead>
+    <tr>
+      <th onclick="sort(0)">File</th>
+      <th onclick="sort(1)" class="r">Size</th>
+      <th onclick="sort(2)" class="r">Duration</th>
+      <th onclick="sort(3)">Format</th>
+      <th onclick="sort(4)">Video</th>
+      <th onclick="sort(5)">Audio</th>
+      <th onclick="sort(6)" class="r">Bitrate</th>
+    </tr>
+  </thead>
+  <tbody>
+{rows_html}
+  </tbody>
+</table>
+</div>
+<footer>Generated {now} · video catalog</footer>
+<script>
+  let _dir = Array(7).fill(1);
+  function sort(col) {{
+    const tb = document.querySelector('#tbl tbody');
+    const rows = Array.from(tb.rows);
+    rows.sort((a, b) => {{
+      const av = a.cells[col] ? a.cells[col].innerText : '';
+      const bv = b.cells[col] ? b.cells[col].innerText : '';
+      const an = parseFloat(av), bn = parseFloat(bv);
+      const cmp = (!isNaN(an) && !isNaN(bn)) ? an - bn : av.localeCompare(bv);
+      return cmp * _dir[col];
+    }});
+    _dir[col] *= -1;
+    rows.forEach(r => tb.appendChild(r));
+  }}
+</script>
+</body>
+</html>"""
+
+
+def cmd_catalog(args):
+    _require("ffprobe")
+    directory = args.directory
+    if not os.path.isdir(directory):
+        sys.exit(f"Error: not a directory: {directory}")
+
+    output = args.output or "catalog.html"
+
+    print(f"Scanning {os.path.abspath(directory)} ...")
+    entries = []
+    for root, dirs, files in os.walk(directory):
+        dirs.sort()
+        for fname in sorted(files):
+            if os.path.splitext(fname)[1].lower() in VIDEO_EXTENSIONS:
+                full_path = os.path.join(root, fname)
+                rel_path = os.path.relpath(full_path, directory)
+                print(f"  {rel_path}")
+                entries.append(_catalog_probe(full_path, rel_path))
+
+    if not entries:
+        sys.exit("No video files found.")
+
+    html = _catalog_html(directory, entries)
+    with open(output, "w", encoding="utf-8") as fh:
+        fh.write(html)
+
+    errors = sum(1 for e in entries if e["error"])
+    print(f"\nReport: {output}  ({len(entries)} files"
+          + (f", {errors} probe errors" if errors else "") + ")")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -227,6 +457,14 @@ def build_parser():
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
     p.add_argument("file", metavar="FILE")
 
+    # catalog
+    p = sub.add_parser("catalog",
+                       help="scan a directory tree and write an HTML report")
+    p.add_argument("directory", metavar="DIR",
+                   help="root directory to scan recursively")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
+                   help="output HTML file (default: catalog.html)")
+
     return parser
 
 
@@ -240,6 +478,7 @@ def main():
         "concat":  cmd_concat,
         "trim":    cmd_trim,
         "thumb":   cmd_thumb,
+        "catalog": cmd_catalog,
     }
     dispatch[args.command](args)
 

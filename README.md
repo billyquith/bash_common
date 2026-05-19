@@ -30,6 +30,7 @@ All video operations are unified under the `video` command (Python3, backed by f
 - `video concat [-o OUTPUT] FILE...` — join videos of the same format and resolution
 - `video trim -s START -e END [-o OUTPUT] FILE` — cut to a time range (HH:MM:SS or seconds)
 - `video thumb [-t TIME] [-o OUTPUT] FILE` — extract a single frame as a PNG image
+- `video catalog [-o OUTPUT] DIR` — scan a directory tree recursively and write a self-contained HTML report (name, size, duration, format, codec, resolution, fps, audio, bitrate)
 
 Run `video <subcommand> -h` for per-subcommand help.
 

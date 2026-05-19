@@ -113,8 +113,15 @@ colecho -white "System tools:"
 check_sys wget
 check_sys python3
 check_sys ffmpeg
-check_sys ffprobe
 check_sys mediainfo
+
+# ffprobe is bundled with ffmpeg — check it but don't add as a separate install target
+if command_exists ffprobe; then
+    colecho -green "  [ok] " -normal "ffprobe (bundled with ffmpeg)"
+elif command_exists ffmpeg; then
+    colecho -ye "  [warn]  " -normal "ffprobe not found despite ffmpeg being present — reinstall ffmpeg"
+fi
+# if ffmpeg is missing, ffprobe will be absent too and is fixed by installing ffmpeg
 
 echo ""
 colecho -white "Python packages:"
