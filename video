@@ -5,10 +5,17 @@ video - unified video tool backed by ffmpeg
 Subcommands:
   catalog    [-o OUTPUT] DIR
                                scan a directory tree and write an HTML report
+  clamp      [-s START] [-e END] [-o OUTPUT] FILE
+                               cut to a time range; start and end are optional
+                               (omit -s to start from the beginning, omit -e to
+                               go to the end of the video)
   concat     [-o OUTPUT] FILE...
                                join videos of the same format and resolution
   convert    [-f FORMAT] [-o OUTPUT] FILE
                                transcode to a target format (default: H.264/AAC MP4)
+  formats    [--all]           explain supported container formats and codecs,
+                               check availability in the installed ffmpeg,
+                               and show current config defaults
   info       [--json] FILE     print detailed file, container and stream info
                                (codec, profile, resolution, aspect ratio, fps,
                                colour space, bit depth, bitrate, channels,
@@ -17,12 +24,8 @@ Subcommands:
                                batch-normalise a directory tree to a web-friendly
                                format (H.264/AAC MP4 at 720p); deinterlaces CRT
                                footage and upscales low-res content via lanczos
-  thumb      [-t TIME] [-o OUTPUT] FILE
+  thumb      [-t TIME] [-H PX] [-o OUTPUT] FILE
                                extract a single frame as a PNG image
-  clamp      [-s START] [-e END] [-o OUTPUT] FILE
-                               cut to a time range; start and end are optional
-                               (omit -s to start from the beginning, omit -e to
-                               go to the end of the video)
 
 Run `video <subcommand> -h` for per-command help.
 """
@@ -313,6 +316,242 @@ def cmd_convert(args):
     cmd += ["-acodec", acodec, "-b:a", abitrate, output]
     _run(cmd)
     print(f"Converted: {output}")
+
+
+# ---------------------------------------------------------------------------
+# Formats reference data
+# ---------------------------------------------------------------------------
+
+_CONTAINER_INFO = {
+    "mp4": {
+        "full_name":  "MPEG-4 Part 14",
+        "muxer":      "mp4",
+        "browser":    "Excellent — supported by every modern browser and device",
+        "use_cases":  "Web delivery, general distribution, streaming, archival",
+        "notes":      "Default choice. Requires moov atom at start for streaming; "
+                      "ffmpeg adds -movflags +faststart automatically when writing to .mp4",
+        "vcodecs":    "H.264 (libx264), H.265 (libx265), AV1",
+        "acodecs":    "AAC, MP3, AC-3",
+    },
+    "mkv": {
+        "full_name":  "Matroska",
+        "muxer":      "matroska",
+        "browser":    "Good — Chrome/Firefox; not Safari without plugin",
+        "use_cases":  "Archival, multiple audio/subtitle tracks, any codec combination",
+        "notes":      "Open container with no codec restrictions. Ideal when you need "
+                      "multiple audio tracks or soft subtitles.",
+        "vcodecs":    "Any (H.264, H.265, AV1, VP9, …)",
+        "acodecs":    "Any (AAC, Opus, FLAC, …)",
+    },
+    "mov": {
+        "full_name":  "QuickTime Movie",
+        "muxer":      "mov",
+        "browser":    "Good on macOS/Safari; limited elsewhere without codec support",
+        "use_cases":  "Apple ecosystem, Final Cut Pro / DaVinci Resolve interchange, ProRes",
+        "notes":      "Apple's native container. Shares most of the MP4 spec (both are "
+                      "ISO Base Media File Format). Prefer MP4 for distribution.",
+        "vcodecs":    "H.264, H.265, ProRes, DNxHD",
+        "acodecs":    "AAC, PCM, ALAC",
+    },
+    "webm": {
+        "full_name":  "WebM",
+        "muxer":      "webm",
+        "browser":    "Excellent in Chrome/Firefox; limited in Safari",
+        "use_cases":  "Web video, open-source pipelines, smaller files at equivalent quality",
+        "notes":      "Royalty-free container designed for the web. VP9+Opus gives "
+                      "competitive quality to H.264+AAC at smaller sizes.",
+        "vcodecs":    "VP8, VP9 (libvpx-vp9), AV1",
+        "acodecs":    "Vorbis, Opus (libopus)",
+    },
+}
+
+_VCODEC_INFO = {
+    "libx264": {
+        "codec":      "H.264 / AVC",
+        "standard":   "ITU-T H.264, ISO/IEC 14496-10",
+        "quality":    "CRF 18–28 (lower = better; 23 is default)",
+        "preset":     "ultrafast → veryslow (speed vs compression; medium is default)",
+        "use_cases":  "Universal default. Best compatibility across all devices and browsers.",
+        "notes":      "Mature, fast encoder. Use CRF 18–20 for near-lossless archival, "
+                      "23 for good web quality, 26–28 for small-but-acceptable files.",
+    },
+    "libx265": {
+        "codec":      "H.265 / HEVC",
+        "standard":   "ITU-T H.265, ISO/IEC 23008-2",
+        "quality":    "CRF 24–28 (default 28; roughly equivalent quality to H.264 at half the bitrate)",
+        "preset":     "ultrafast → veryslow (slower presets give significantly better compression)",
+        "use_cases":  "4K/HDR archival, bandwidth-constrained delivery, future-proofing",
+        "notes":      "~50% smaller than H.264 at the same quality, but slower to encode "
+                      "and decode. Not universally supported (no Safari < macOS 10.13).",
+    },
+    "libvpx-vp9": {
+        "codec":      "VP9",
+        "standard":   "Google VP9 (open, royalty-free)",
+        "quality":    "CRF 15–35; also supports -b:v 0 -crf N for constrained quality",
+        "preset":     "Use -cpu-used 0–5 (0 = slowest/best, 4 = fast/default for web)",
+        "use_cases":  "WebM/web delivery, YouTube, open-source pipelines",
+        "notes":      "Royalty-free alternative to H.265. Good quality but slower to encode. "
+                      "Pair with Opus audio for best results.",
+    },
+}
+
+_ACODEC_INFO = {
+    "aac": {
+        "codec":     "Advanced Audio Coding",
+        "standard":  "ISO/IEC 13818-7",
+        "bitrates":  "96–320 kb/s stereo; 128 kb/s is a solid default",
+        "use_cases": "Universal — pairs with H.264/H.265 in MP4/MOV/MKV",
+        "notes":     "The most compatible audio codec. AAC-LC is the standard profile; "
+                     "ffmpeg uses the built-in aac encoder unless libfdk_aac is available.",
+    },
+    "libopus": {
+        "codec":     "Opus",
+        "standard":  "IETF RFC 6716 (open, royalty-free)",
+        "bitrates":  "32–320 kb/s; transparent quality at ~128 kb/s stereo",
+        "use_cases": "WebM, open-source pipelines, low-bitrate speech/music",
+        "notes":     "Best audio codec at low-to-medium bitrates. Royalty-free. "
+                     "Required for WebM; also works in MKV.",
+    },
+    "libmp3lame": {
+        "codec":     "MP3 / MPEG-1 Audio Layer III",
+        "standard":  "ISO/IEC 11172-3",
+        "bitrates":  "128–320 kb/s; 192 kb/s is the common quality threshold",
+        "use_cases": "Legacy compatibility, standalone audio files",
+        "notes":     "Widely supported but technically inferior to AAC at the same bitrate. "
+                     "Use AAC unless MP3 compatibility is specifically required.",
+    },
+}
+
+
+def _get_available_encoders():
+    """Return a set of encoder names available in the installed ffmpeg."""
+    try:
+        out = subprocess.check_output(
+            ["ffmpeg", "-encoders", "-v", "quiet"],
+            stderr=subprocess.DEVNULL,
+        ).decode(errors="replace")
+        encoders = set()
+        for line in out.splitlines():
+            parts = line.split()
+            # Encoder lines: " V..... libx264   H.264 / AVC ..."
+            if len(parts) >= 2 and len(parts[0]) == 6 and parts[0][0] in "VAS":
+                encoders.add(parts[1])
+        return encoders
+    except Exception:
+        return set()
+
+
+def _get_available_muxers():
+    """Return a set of muxer names available in the installed ffmpeg."""
+    try:
+        out = subprocess.check_output(
+            ["ffmpeg", "-muxers", "-v", "quiet"],
+            stderr=subprocess.DEVNULL,
+        ).decode(errors="replace")
+        muxers = set()
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and len(parts[0]) == 2 and "E" in parts[0]:
+                muxers.add(parts[1])
+        return muxers
+    except Exception:
+        return set()
+
+
+def cmd_formats(args):
+    _require("ffmpeg")
+
+    GREEN  = "\033[32m"
+    RED    = "\033[31m"
+    YELLOW = "\033[33m"
+    BOLD   = "\033[1m"
+    DIM    = "\033[2m"
+    RESET  = "\033[0m"
+    HR     = "─" * 60
+    W      = 16
+
+    def section(title):
+        print(f"\n{BOLD}{title}{RESET}")
+        print(HR)
+
+    def field(label, value):
+        if value:
+            print(f"  {label:<{W}} {value}")
+
+    def avail(name, available):
+        mark = f"{GREEN}✓ available{RESET}" if name in available \
+               else f"{RED}✗ not in this build{RESET}"
+        return mark
+
+    encoders = _get_available_encoders()
+    muxers   = _get_available_muxers()
+
+    # ---- Tool versions ----
+    section("Tools")
+    field("ffmpeg",  _tool_version("ffmpeg"))
+    field("ffprobe", _tool_version("ffprobe"))
+
+    # ---- Current config ----
+    section("Current config  (~/.bccfg/video.ini)")
+    field("Default format",  _vcfg("convert", "default_format",  "mp4"))
+    field("Video codec",     _vcfg("convert", "video_codec",     "libx264"))
+    field("Audio codec",     _vcfg("convert", "audio_codec",     "aac"))
+    field("CRF",             _vcfg("convert", "video_crf",       "23"))
+    field("Preset",          _vcfg("convert", "video_preset",    "medium"))
+    field("Audio bitrate",   _vcfg("convert", "audio_bitrate",   "128k"))
+
+    # ---- Container formats ----
+    section("Container formats")
+    for ext, info in _CONTAINER_INFO.items():
+        mark = f"{GREEN}✓{RESET}" if info["muxer"] in muxers else f"{RED}✗{RESET}"
+        print(f"\n  {BOLD}.{ext}{RESET}  {DIM}{info['full_name']}{RESET}  {mark}")
+        print(f"  {'Browser':<{W}} {info['browser']}")
+        print(f"  {'Use cases':<{W}} {info['use_cases']}")
+        print(f"  {'Video codecs':<{W}} {info['vcodecs']}")
+        print(f"  {'Audio codecs':<{W}} {info['acodecs']}")
+        print(f"  {'Notes':<{W}} {info['notes']}")
+
+    # ---- Video codecs ----
+    section("Video codecs")
+    for enc, info in _VCODEC_INFO.items():
+        mark = avail(enc, encoders)
+        print(f"\n  {BOLD}{enc}{RESET}  {DIM}{info['codec']}{RESET}  {mark}")
+        print(f"  {'Standard':<{W}} {info['standard']}")
+        print(f"  {'Quality':<{W}} {info['quality']}")
+        print(f"  {'Preset':<{W}} {info['preset']}")
+        print(f"  {'Use cases':<{W}} {info['use_cases']}")
+        print(f"  {'Notes':<{W}} {info['notes']}")
+
+    # ---- Audio codecs ----
+    section("Audio codecs")
+    for enc, info in _ACODEC_INFO.items():
+        mark = avail(enc, encoders)
+        print(f"\n  {BOLD}{enc}{RESET}  {DIM}{info['codec']}{RESET}  {mark}")
+        print(f"  {'Standard':<{W}} {info['standard']}")
+        print(f"  {'Bitrates':<{W}} {info['bitrates']}")
+        print(f"  {'Use cases':<{W}} {info['use_cases']}")
+        print(f"  {'Notes':<{W}} {info['notes']}")
+
+    if args.all:
+        # ---- Full ffmpeg encoder list ----
+        section("All available encoders  (ffmpeg -encoders)")
+        try:
+            out = subprocess.check_output(
+                ["ffmpeg", "-encoders", "-v", "quiet"],
+                stderr=subprocess.DEVNULL,
+            ).decode(errors="replace")
+            # Print from the "------" divider onwards
+            printing = False
+            for line in out.splitlines():
+                if line.startswith(" ---"):
+                    printing = True
+                    continue
+                if printing:
+                    print(" ", line)
+        except Exception as e:
+            print(f"  (error: {e})")
+
+    print()
 
 
 def cmd_concat(args):
@@ -1069,6 +1308,12 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", metavar="SUBCOMMAND")
     sub.required = True
 
+    # formats
+    p = sub.add_parser("formats",
+                       help="explain supported formats and codecs, check ffmpeg availability")
+    p.add_argument("--all", action="store_true",
+                   help="also list every encoder available in the installed ffmpeg")
+
     # info
     p = sub.add_parser("info", help="print detailed file, container and stream information")
     p.add_argument("file", metavar="FILE")
@@ -1149,6 +1394,7 @@ def main():
 
     dispatch = {
         "catalog":   cmd_catalog,
+        "formats":   cmd_formats,
         "concat":    cmd_concat,
         "convert":   cmd_convert,
         "info":      cmd_info,
