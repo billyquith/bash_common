@@ -280,34 +280,37 @@ def cmd_info(args):
 
 def cmd_convert(args):
     _require("ffmpeg")
-    fmt = args.format.lower()
-    output = args.output
 
-    # Per-format codec fallbacks; config overrides the default codecs for
-    # the non-webm formats where the user's video_codec/audio_codec apply.
-    vcodec_default = _vcfg("convert", "video_codec", "libx264")
-    acodec_default = _vcfg("convert", "audio_codec", "aac")
-    codec_map = {
-        "mp4":  (vcodec_default, acodec_default),
-        "mkv":  (vcodec_default, acodec_default),
-        "mov":  (vcodec_default, acodec_default),
-        "webm": ("libvpx-vp9",   "libopus"),
-    }
-    if fmt not in codec_map:
-        sys.exit(f"Error: unsupported format '{fmt}'. Supported: {', '.join(codec_map)}")
+    # All settings: explicit args win, then config, then hardcoded fallbacks
+    fmt     = args.format.lower()
+    vcodec  = args.vcodec  or _vcfg("convert", "video_codec",   "libx264")
+    acodec  = args.acodec  or _vcfg("convert", "audio_codec",   "aac")
+    crf     = str(args.crf    if args.crf    is not None else _vcfg("convert", "video_crf",    "23"))
+    preset  = args.preset  or _vcfg("convert", "video_preset",  "medium")
+    abitrate= args.abitrate or _vcfg("convert", "audio_bitrate", "128k")
 
-    if output is None:
-        output = _default_output(args.file, f"_.{fmt}")
+    SUPPORTED = {"mp4", "mkv", "mov", "webm"}
+    if fmt not in SUPPORTED:
+        sys.exit(f"Error: unsupported format '{fmt}'. Supported: {', '.join(sorted(SUPPORTED))}")
 
-    vcodec, acodec = codec_map[fmt]
-    cmd = ["ffmpeg", "-i", args.file, "-vcodec", vcodec]
+    # webm needs its own codecs regardless of config/args
+    if fmt == "webm":
+        vcodec = "libvpx-vp9"
+        acodec = "libopus"
 
-    # Quality and preset only apply to libx264/libx265
+    output = args.output or _default_output(args.file, f"_.{fmt}")
+
+    cmd = ["ffmpeg", "-i", args.file]
+
+    if args.height:
+        cmd += ["-vf", f"scale=-2:{args.height}"]
+
+    cmd += ["-vcodec", vcodec]
+
     if vcodec in ("libx264", "libx265"):
-        cmd += ["-crf",    _vcfg("convert", "video_crf",    "23")]
-        cmd += ["-preset", _vcfg("convert", "video_preset", "medium")]
+        cmd += ["-crf", crf, "-preset", preset]
 
-    cmd += ["-acodec", acodec, "-b:a", _vcfg("convert", "audio_bitrate", "128k"), output]
+    cmd += ["-acodec", acodec, "-b:a", abitrate, output]
     _run(cmd)
     print(f"Converted: {output}")
 
@@ -350,13 +353,12 @@ def cmd_thumb(args):
     _require("ffmpeg")
     output = args.output or _default_output(args.file, "_thumb.png")
     timestamp = args.time or _vcfg("thumb", "time", "00:00:01")
-    _run([
-        "ffmpeg",
-        "-i", args.file,
-        "-ss", timestamp,
-        "-vframes", "1",
-        output,
-    ])
+    cmd = ["ffmpeg", "-i", args.file, "-ss", timestamp, "-vframes", "1"]
+    if args.height:
+        # -2 keeps width even and maintains aspect ratio
+        cmd += ["-vf", f"scale=-2:{args.height}"]
+    cmd.append(output)
+    _run(cmd)
     print(f"Thumbnail: {output}")
 
 
@@ -1075,11 +1077,24 @@ def build_parser():
 
     # convert
     default_fmt = _vcfg("convert", "default_format", "mp4")
-    p = sub.add_parser("convert", help=f"transcode to a target format (default from config: {default_fmt})")
-    p.add_argument("-f", "--format", default=default_fmt, metavar="FORMAT",
-                   help=f"output format: mp4, webm, mkv, mov (config default: {default_fmt})")
-    p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
+    p = sub.add_parser("convert",
+                       help="transcode a file using config defaults (all overridable via args)")
     p.add_argument("file", metavar="FILE")
+    p.add_argument("-f", "--format", default=default_fmt, metavar="FORMAT",
+                   help=f"container format: mp4, mkv, mov, webm (config: {default_fmt})")
+    p.add_argument("-H", "--height", default=None, metavar="PX", type=int,
+                   help="scale to this height in pixels, maintaining aspect ratio")
+    p.add_argument("--vcodec", default=None, metavar="CODEC",
+                   help=f"video codec (config: {_vcfg('convert','video_codec','libx264')})")
+    p.add_argument("--acodec", default=None, metavar="CODEC",
+                   help=f"audio codec (config: {_vcfg('convert','audio_codec','aac')})")
+    p.add_argument("--crf", default=None, metavar="N", type=int,
+                   help=f"CRF quality, lower=better (config: {_vcfg('convert','video_crf','23')})")
+    p.add_argument("--preset", default=None, metavar="PRESET",
+                   help=f"encoding preset (config: {_vcfg('convert','video_preset','medium')})")
+    p.add_argument("--abitrate", default=None, metavar="RATE",
+                   help=f"audio bitrate (config: {_vcfg('convert','audio_bitrate','128k')})")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
 
     # concat
     p = sub.add_parser("concat", help="join videos of the same format and resolution")
@@ -1100,6 +1115,8 @@ def build_parser():
     p = sub.add_parser("thumb", help="extract a single frame as a PNG image")
     p.add_argument("-t", "--time", default=None, metavar="TIME",
                    help="timestamp to grab (default: 00:00:01)")
+    p.add_argument("-H", "--height", default=None, metavar="PX", type=int,
+                   help="scale to this height in pixels, maintaining aspect ratio")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
     p.add_argument("file", metavar="FILE")
 
