@@ -20,6 +20,20 @@ towards game development. Features (non-exhaustive) include:
   - `bs <name>` save current directory as bookmark
   - `bd <name>` delete bookmark
 - `markdown` Python markdown2 processor
+
+### Video Tools
+
+All video operations are unified under the `video` command (Python3, backed by ffmpeg):
+
+- `video info FILE` — print codec, resolution, duration, and bitrate
+- `video convert [-f FORMAT] [-o OUTPUT] FILE` — transcode to MP4 (H.264/AAC), WebM, MKV, or MOV
+- `video concat [-o OUTPUT] FILE...` — join videos of the same format and resolution
+- `video trim -s START -e END [-o OUTPUT] FILE` — cut to a time range (HH:MM:SS or seconds)
+- `video thumb [-t TIME] [-o OUTPUT] FILE` — extract a single frame as a PNG image
+
+Run `video <subcommand> -h` for per-subcommand help.
+
+Dependencies: `ffmpeg` and `ffprobe` must be on PATH. Run `bcinit` to install.
   
 ## Installing
 
@@ -31,7 +45,20 @@ initialising to add things like environment variables, paths, and completions.
     git clone https://github.com/billyquith/bash_common.git
 ```
 
-Source the bash_common `.profile` and `.bashrc` from your home ones. In `~/.bash_profile` 
+After cloning, run `bcinit` to check and install all dependencies (ffmpeg, python3,
+mediainfo, wget, and required Python packages):
+
+```bash
+    ~/bash_common/bcinit
+```
+
+Pass `-c` to check without installing:
+
+```bash
+    ~/bash_common/bcinit -c
+```
+
+Source the bash_common `.profile` and `.bashrc` from your home ones. In `~/.bash_profile`
 source `bash_common/.profile` and make sure your `.bashrc` is sourced:
 
 ```bash
@@ -45,12 +72,36 @@ In your `~/.bashrc` ensure that `bash_common/.bashrc` is sourced:
 [ -f ~/bash_common/.bashrc ] && source ~/bash_common/.bashrc
 ```
 
+## Platform Support
+
+bash_common is designed to work across three platform families, selected automatically
+at startup by inspecting `uname -s`:
+
+| Platform | `BC_SYSTEM` | `BC_OS`   | Typical use                        |
+|----------|-------------|-----------|-------------------------------------|
+| macOS    | `darwin`    | `macos`   | Desktop development on Apple hardware |
+| Windows  | `cygwin`    | `windows` | Cygwin terminal on Windows          |
+| Linux / UNIX | `unix`  | `unix`    | Linux distros, FreeBSD, WSL, CI/CD  |
+
+Platform-specific init scripts live in `darwin/_init.sh`, `cygwin/_init.sh`, and
+`unix/_init.sh`. The `unix` label is intentionally broad — it is the catch-all for
+anything that is not Darwin or Cygwin, including all Linux distributions (Ubuntu, Fedora,
+Arch, etc.), BSDs, and WSL. There is no separate `linux` directory because there is no
+behaviour that needs to be split at that level; distro differences (package managers,
+etc.) are handled at install time by `bcinit`.
+
+Each `_init.sh` sets platform-appropriate aliases and loads relevant completions. The
+default `EDITOR` is also set per platform (TextMate on macOS, VS Code on Cygwin, `vi`
+on UNIX).
+
 ## Environment
 
 ### Variables
 
 - `EDITOR` : default text/source editor to use.
 - `BC_INSTALL_DIR` : where this lives, bin dir.
+- `BC_SYSTEM` : platform identifier (`darwin`, `cygwin`, or `unix`).
+- `BC_OS` : OS family (`macos`, `windows`, or `unix`).
 
 ## Why Bash?
 

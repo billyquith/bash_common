@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+"""
+video - unified video tool backed by ffmpeg
+
+Subcommands:
+  info     FILE              print codec, resolution, duration, bitrate
+  convert  [-f FORMAT] [-o OUTPUT] FILE
+                             transcode to a target format (default: H.264/AAC MP4)
+  concat   [-o OUTPUT] FILE...
+                             join videos of the same format and resolution
+  trim     -s START -e END [-o OUTPUT] FILE
+                             cut to a time range (HH:MM:SS or seconds)
+  thumb    [-t TIME] [-o OUTPUT] FILE
+                             extract a single frame as a PNG image
+
+Run `video <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import json
+import logging
+import os
+import subprocess
+import sys
+import tempfile
+
+LOG = logging.getLogger(__name__)
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
+
+
+# ---------------------------------------------------------------------------
+# Dependency check
+# ---------------------------------------------------------------------------
+
+def _require(*tools):
+    missing = [t for t in tools if not _on_path(t)]
+    if missing:
+        sys.exit(
+            f"Error: required tool(s) not found on PATH: {', '.join(missing)}\n"
+            "Run 'bcinit' to install missing dependencies."
+        )
+
+
+def _on_path(tool):
+    import shutil
+    return shutil.which(tool) is not None
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg / ffprobe helpers
+# ---------------------------------------------------------------------------
+
+def _run(cmd, check=True):
+    """Run a command, streaming output to the terminal."""
+    LOG.debug("run: %s", " ".join(str(c) for c in cmd))
+    result = subprocess.run([str(c) for c in cmd], check=check)
+    return result.returncode
+
+
+def _probe(path):
+    """Return ffprobe JSON for *path*."""
+    cmd = [
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_format", "-show_streams",
+        path,
+    ]
+    out = subprocess.check_output([str(c) for c in cmd], stderr=subprocess.DEVNULL)
+    return json.loads(out)
+
+
+def _default_output(path, suffix):
+    """Derive an output filename from *path* with *suffix* appended before the extension."""
+    base, _ = os.path.splitext(os.path.basename(path))
+    return f"{base}{suffix}"
+
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+def cmd_info(args):
+    _require("ffprobe")
+    data = _probe(args.file)
+
+    fmt = data.get("format", {})
+    print(f"File      : {args.file}")
+    print(f"Format    : {fmt.get('format_long_name', fmt.get('format_name', '?'))}")
+    duration = float(fmt.get("duration", 0))
+    mins, secs = divmod(int(duration), 60)
+    hrs, mins = divmod(mins, 60)
+    print(f"Duration  : {hrs:02d}:{mins:02d}:{secs:02d} ({duration:.2f}s)")
+    size = int(fmt.get("size", 0))
+    print(f"Size      : {size / 1024 / 1024:.2f} MB")
+    bitrate = int(fmt.get("bit_rate", 0))
+    print(f"Bitrate   : {bitrate // 1000} kb/s")
+
+    for stream in data.get("streams", []):
+        ctype = stream.get("codec_type", "?")
+        codec = stream.get("codec_name", "?")
+        idx = stream.get("index", "?")
+        if ctype == "video":
+            w = stream.get("width", "?")
+            h = stream.get("height", "?")
+            fps = stream.get("avg_frame_rate", "?")
+            print(f"Video [{idx}]  : {codec}  {w}x{h}  {fps} fps")
+        elif ctype == "audio":
+            ch = stream.get("channels", "?")
+            rate = stream.get("sample_rate", "?")
+            print(f"Audio [{idx}]  : {codec}  {ch}ch  {rate} Hz")
+
+
+def cmd_convert(args):
+    _require("ffmpeg")
+    fmt = args.format.lower()
+    output = args.output
+
+    codec_map = {
+        "mp4":  ("-vcodec", "libx264", "-acodec", "aac"),
+        "webm": ("-vcodec", "libvpx-vp9", "-acodec", "libopus"),
+        "mkv":  ("-vcodec", "libx264", "-acodec", "aac"),
+        "mov":  ("-vcodec", "libx264", "-acodec", "aac"),
+    }
+    if fmt not in codec_map:
+        sys.exit(f"Error: unsupported format '{fmt}'. Supported: {', '.join(codec_map)}")
+
+    if output is None:
+        output = _default_output(args.file, f"_.{fmt}")
+
+    codecs = codec_map[fmt]
+    _run(["ffmpeg", "-i", args.file] + list(codecs) + [output])
+    print(f"Converted: {output}")
+
+
+def cmd_concat(args):
+    _require("ffmpeg")
+    output = args.output or "output.mp4"
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as flist:
+        for f in args.files:
+            flist.write(f"file '{os.path.abspath(f)}'\n")
+        flist_path = flist.name
+
+    try:
+        _run([
+            "ffmpeg", "-f", "concat", "-safe", "0",
+            "-i", flist_path,
+            "-vcodec", "libx264", "-acodec", "aac",
+            output,
+        ])
+        print(f"Concatenated: {output}")
+    finally:
+        os.unlink(flist_path)
+
+
+def cmd_trim(args):
+    _require("ffmpeg")
+    output = args.output or _default_output(args.file, "_trim.mp4")
+    _run([
+        "ffmpeg",
+        "-i", args.file,
+        "-ss", args.start,
+        "-to", args.end,
+        "-vcodec", "libx264", "-acodec", "aac",
+        output,
+    ])
+    print(f"Trimmed: {output}")
+
+
+def cmd_thumb(args):
+    _require("ffmpeg")
+    output = args.output or _default_output(args.file, "_thumb.png")
+    timestamp = args.time or "00:00:01"
+    _run([
+        "ffmpeg",
+        "-i", args.file,
+        "-ss", timestamp,
+        "-vframes", "1",
+        output,
+    ])
+    print(f"Thumbnail: {output}")
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def build_parser():
+    parser = argparse.ArgumentParser(
+        prog="video",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", metavar="SUBCOMMAND")
+    sub.required = True
+
+    # info
+    p = sub.add_parser("info", help="print codec, resolution, duration, bitrate")
+    p.add_argument("file", metavar="FILE")
+
+    # convert
+    p = sub.add_parser("convert", help="transcode to a target format (default: H.264/AAC MP4)")
+    p.add_argument("-f", "--format", default="mp4", metavar="FORMAT",
+                   help="output format: mp4 (default), webm, mkv, mov")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
+    p.add_argument("file", metavar="FILE")
+
+    # concat
+    p = sub.add_parser("concat", help="join videos of the same format and resolution")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
+                   help="output filename (default: output.mp4)")
+    p.add_argument("files", nargs="+", metavar="FILE")
+
+    # trim
+    p = sub.add_parser("trim", help="cut to a time range")
+    p.add_argument("-s", "--start", required=True, metavar="TIME",
+                   help="start time as HH:MM:SS or seconds")
+    p.add_argument("-e", "--end", required=True, metavar="TIME",
+                   help="end time as HH:MM:SS or seconds")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
+    p.add_argument("file", metavar="FILE")
+
+    # thumb
+    p = sub.add_parser("thumb", help="extract a single frame as a PNG image")
+    p.add_argument("-t", "--time", default=None, metavar="TIME",
+                   help="timestamp to grab (default: 00:00:01)")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
+    p.add_argument("file", metavar="FILE")
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    dispatch = {
+        "info":    cmd_info,
+        "convert": cmd_convert,
+        "concat":  cmd_concat,
+        "trim":    cmd_trim,
+        "thumb":   cmd_thumb,
+    }
+    dispatch[args.command](args)
+
+
+if __name__ == "__main__":
+    main()

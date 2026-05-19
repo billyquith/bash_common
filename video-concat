@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED: use `video concat` instead.
+#   video concat [-o OUTPUT] FILE...
+# This script is kept for backwards compatibility only.
+
 # Join videos of same format and size.
 # See https://stackoverflow.com/a/11175851
 # See https://trac.ffmpeg.org/wiki/Concatenate

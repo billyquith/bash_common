@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED: use `video convert` and `video info` instead.
+#   video info FILE
+#   video convert [-f FORMAT] [-o OUTPUT] FILE
+# This script is kept for backwards compatibility only.
 
 FILE=$1
 OUT=${FILE%.*}_.mp4

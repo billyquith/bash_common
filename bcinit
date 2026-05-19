@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+# bcinit - initialise bash_common dependencies
+#
+# Run once after cloning to check and install everything bash_common needs.
+# Usage: bcinit [-c]
+#   -c   check only; report missing deps but do not install
+
+SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
+source "$SCRIPTPATH/commands/helpers.sh"
+source "$SCRIPTPATH/commands/colour.sh"
+
+CHECK_ONLY=0
+
+while getopts "c" OPT; do
+    case "${OPT}" in
+        c) CHECK_ONLY=1 ;;
+        *) echo "Usage: $(basename $0) [-c]"; exit 1 ;;
+    esac
+done
+
+# Detect platform (mirrors .bashrc logic, but standalone so BC_SYSTEM may not be set yet)
+case "$(uname -s)" in
+    Darwin)  PLATFORM=darwin  ;;
+    CYGWIN*) PLATFORM=cygwin  ;;
+    *)       PLATFORM=unix    ;;
+esac
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+MISSING_SYS=()
+MISSING_PY=()
+
+check_sys() {
+    local cmd=$1
+    if command_exists "$cmd"; then
+        colecho -green "  [ok] " -normal "$cmd"
+    else
+        colecho -red "  [missing] " -normal "$cmd"
+        MISSING_SYS+=("$cmd")
+    fi
+}
+
+check_py() {
+    local pkg=$1
+    if python3 -c "import $pkg" 2>/dev/null; then
+        colecho -green "  [ok] " -normal "python: $pkg"
+    else
+        colecho -red "  [missing] " -normal "python: $pkg"
+        MISSING_PY+=("$pkg")
+    fi
+}
+
+install_sys_darwin() {
+    if ! command_exists brew; then
+        colecho -red "Error:" -normal " brew not found. Install Homebrew first: https://brew.sh"
+        exit 1
+    fi
+    brew install "$@"
+}
+
+install_sys_unix() {
+    if command_exists apt-get; then
+        sudo apt-get install -y "$@"
+    elif command_exists dnf; then
+        sudo dnf install -y "$@"
+    elif command_exists pacman; then
+        sudo pacman -S --noconfirm "$@"
+    else
+        colecho -red "Error:" -normal " no supported package manager found (apt-get, dnf, pacman)"
+        exit 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Check
+# ---------------------------------------------------------------------------
+
+colecho -cyan "bash_common dependency check"
+echo ""
+
+colecho -white "System tools:"
+check_sys wget
+check_sys python3
+check_sys ffmpeg
+check_sys ffprobe
+check_sys mediainfo
+
+echo ""
+colecho -white "Python packages:"
+if command_exists python3; then
+    check_py markdown2
+else
+    colecho -ye "  (skipping Python package checks: python3 not found)"
+fi
+
+# ---------------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------------
+
+if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ]; then
+    echo ""
+    colecho -green "All dependencies satisfied."
+    exit 0
+fi
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+    echo ""
+    colecho -ye "Check-only mode (-c). Run without -c to install missing dependencies."
+    exit 1
+fi
+
+echo ""
+colecho -cyan "Installing missing dependencies..."
+
+if [ ${#MISSING_SYS[@]} -gt 0 ]; then
+    echo ""
+    colecho -white "Installing system tools: ${MISSING_SYS[*]}"
+    case "$PLATFORM" in
+        darwin)
+            install_sys_darwin "${MISSING_SYS[@]}"
+            ;;
+        unix)
+            install_sys_unix "${MISSING_SYS[@]}"
+            ;;
+        cygwin)
+            colecho -ye "  Cygwin: please install manually via the Cygwin setup tool: ${MISSING_SYS[*]}"
+            ;;
+    esac
+fi
+
+if [ ${#MISSING_PY[@]} -gt 0 ]; then
+    echo ""
+    colecho -white "Installing Python packages: ${MISSING_PY[*]}"
+    python3 -m pip install "${MISSING_PY[@]}"
+fi
+
+echo ""
+colecho -green "Done."

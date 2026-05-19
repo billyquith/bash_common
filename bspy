@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
+# DEPRECATED: dependency installation is now handled by `bcinit`.
+# Run `bcinit` to check and install all bash_common dependencies including
+# Python packages. This script is kept for reference only.
 
 echo 'Default system python'
-python -V
+python3 -V
 
 # install python requirements
-pip install markdown2
+python3 -m pip install markdown2
 
-pip list
+python3 -m pip list
