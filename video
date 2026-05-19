@@ -3,17 +3,26 @@
 video - unified video tool backed by ffmpeg
 
 Subcommands:
-  catalog  [-o OUTPUT] DIR
-                             scan a directory tree and write an HTML report
-  concat   [-o OUTPUT] FILE...
-                             join videos of the same format and resolution
-  convert  [-f FORMAT] [-o OUTPUT] FILE
-                             transcode to a target format (default: H.264/AAC MP4)
-  info     FILE              print codec, resolution, duration, bitrate
-  thumb    [-t TIME] [-o OUTPUT] FILE
-                             extract a single frame as a PNG image
-  trim     -s START -e END [-o OUTPUT] FILE
-                             cut to a time range (HH:MM:SS or seconds)
+  catalog    [-o OUTPUT] DIR
+                               scan a directory tree and write an HTML report
+  concat     [-o OUTPUT] FILE...
+                               join videos of the same format and resolution
+  convert    [-f FORMAT] [-o OUTPUT] FILE
+                               transcode to a target format (default: H.264/AAC MP4)
+  info       [--json] FILE     print detailed file, container and stream info
+                               (codec, profile, resolution, aspect ratio, fps,
+                               colour space, bit depth, bitrate, channels,
+                               tags, and more; --json for raw ffprobe output)
+  normalise  [-n] [-f] DIR
+                               batch-normalise a directory tree to a web-friendly
+                               format (H.264/AAC MP4 at 720p); deinterlaces CRT
+                               footage and upscales low-res content via lanczos
+  thumb      [-t TIME] [-o OUTPUT] FILE
+                               extract a single frame as a PNG image
+  clamp      [-s START] [-e END] [-o OUTPUT] FILE
+                               cut to a time range; start and end are optional
+                               (omit -s to start from the beginning, omit -e to
+                               go to the end of the video)
 
 Run `video <subcommand> -h` for per-command help.
 """
@@ -24,9 +33,11 @@ import datetime
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
@@ -38,26 +49,34 @@ BCCFG = os.path.expanduser("~/.bccfg")
 # User config
 # ---------------------------------------------------------------------------
 
-def _load_config():
-    """Load ~/.bccfg/video.ini via configparser.
+def _load_config(local_dir=None):
+    """Load video.ini configuration via configparser.
 
-    Returns a ConfigParser instance. If the file does not exist the instance
-    is empty and all get() calls will use their fallback values.
+    Reads the global ~/.bccfg/video.ini first, then merges a local
+    video.ini from *local_dir* on top if one exists. Local values win.
+    Returns a ConfigParser instance; missing keys fall back gracefully.
     """
     cfg = configparser.ConfigParser()
-    path = os.path.join(BCCFG, "video.ini")
-    if os.path.isfile(path):
-        cfg.read(path, encoding="utf-8")
+    paths = [os.path.join(BCCFG, "video.ini")]
+    if local_dir:
+        local = os.path.join(os.path.abspath(local_dir), "video.ini")
+        if os.path.isfile(local):
+            paths.append(local)
+    cfg.read(paths, encoding="utf-8")
     return cfg
 
 
-# Loaded once at import time so all subcommands share the same instance
+# Global config loaded once at import time (no local override).
+# Subcommands that accept a directory load their own merged config at runtime.
 _VIDEO_CFG = _load_config()
 
 
-def _vcfg(section, key, fallback):
-    """Return a value from video.ini [section]/key, falling back to *fallback*."""
-    return _VIDEO_CFG.get(section, key, fallback=fallback)
+def _vcfg(section, key, fallback, cfg=None):
+    """Return a value from [section]/key, falling back to *fallback*.
+
+    Uses the module-level global config unless *cfg* is supplied.
+    """
+    return (cfg or _VIDEO_CFG).get(section, key, fallback=fallback)
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +93,6 @@ def _require(*tools):
 
 
 def _on_path(tool):
-    import shutil
     return shutil.which(tool) is not None
 
 
@@ -113,33 +131,151 @@ def _default_output(path, suffix):
 
 def cmd_info(args):
     _require("ffprobe")
-    data = _probe(args.file)
 
-    fmt = data.get("format", {})
-    print(f"File      : {args.file}")
-    print(f"Format    : {fmt.get('format_long_name', fmt.get('format_name', '?'))}")
-    duration = float(fmt.get("duration", 0))
-    mins, secs = divmod(int(duration), 60)
-    hrs, mins = divmod(mins, 60)
-    print(f"Duration  : {hrs:02d}:{mins:02d}:{secs:02d} ({duration:.2f}s)")
-    size = int(fmt.get("size", 0))
-    print(f"Size      : {size / 1024 / 1024:.2f} MB")
-    bitrate = int(fmt.get("bit_rate", 0))
-    print(f"Bitrate   : {bitrate // 1000} kb/s")
+    if args.json:
+        data = _probe(args.file)
+        print(json.dumps(data, indent=2))
+        return
 
-    for stream in data.get("streams", []):
-        ctype = stream.get("codec_type", "?")
-        codec = stream.get("codec_name", "?")
-        idx = stream.get("index", "?")
+    path = args.file
+    stat = os.stat(path)
+    data = _probe(path)
+
+    fmt     = data.get("format", {})
+    streams = data.get("streams", [])
+    tags    = fmt.get("tags", {})
+
+    # ---- helpers ----
+    W  = 18   # label column width
+    HR = "─" * 54
+
+    def section(title):
+        print(f"\n\033[1m{title}\033[0m")
+        print(HR)
+
+    def field(label, value, note=""):
+        if value in (None, "", "unknown", "0", 0):
+            return
+        note_str = f"  \033[2m({note})\033[0m" if note else ""
+        print(f"  {label:<{W}} {value}{note_str}")
+
+    def ratio(raw):
+        """'16:9' or fraction string → reduce and return, e.g. '16:9'."""
+        try:
+            a, b = (int(x) for x in raw.replace(":", "/").split("/"))
+            from math import gcd
+            g = gcd(a, b)
+            return f"{a//g}:{b//g}"
+        except Exception:
+            return raw
+
+    # ---- File ----
+    section("File")
+    field("Path",          os.path.abspath(path))
+    field("Size",          _fmt_size(stat.st_size),
+          f"{stat.st_size:,} bytes")
+    field("Modified",      datetime.datetime.fromtimestamp(stat.st_mtime)
+                               .strftime("%Y-%m-%d %H:%M:%S"))
+
+    # ---- Container ----
+    section("Container")
+    field("Format",        fmt.get("format_long_name") or fmt.get("format_name"))
+    duration = float(fmt.get("duration") or 0)
+    if duration:
+        h, rem = divmod(int(duration), 3600)
+        m, s   = divmod(rem, 60)
+        field("Duration",  f"{h:02d}:{m:02d}:{s:02d}", f"{duration:.3f}s")
+    br = int(fmt.get("bit_rate") or 0)
+    field("Overall bitrate", f"{br // 1000} kb/s")
+    field("Streams",       fmt.get("nb_streams"))
+    if tags:
+        for k in ("title", "comment", "artist", "album", "copyright",
+                  "creation_time", "encoder", "major_brand"):
+            v = tags.get(k) or tags.get(k.upper())
+            if v:
+                field(k.replace("_", " ").title(), v)
+
+    # ---- Streams ----
+    vs_count = as_count = ss_count = 0
+    for s in streams:
+        ctype = s.get("codec_type", "data")
+        idx   = s.get("index", "?")
+        codec = s.get("codec_name", "?")
+        stags = s.get("tags", {})
+        lang  = stags.get("language") or stags.get("LANGUAGE") or ""
+
         if ctype == "video":
-            w = stream.get("width", "?")
-            h = stream.get("height", "?")
-            fps = stream.get("avg_frame_rate", "?")
-            print(f"Video [{idx}]  : {codec}  {w}x{h}  {fps} fps")
+            vs_count += 1
+            section(f"Video stream #{idx}"
+                    + (f"  [{lang}]" if lang else ""))
+            field("Codec",         codec)
+            field("Profile",       s.get("profile"))
+            field("Level",         s.get("level"))
+            w, h = s.get("width", 0), s.get("height", 0)
+            if w and h:
+                field("Resolution",    f"{w}×{h}")
+            dar = s.get("display_aspect_ratio", "")
+            if dar and dar != "0:1":
+                field("Aspect ratio",  ratio(dar))
+            field("Pixel format",  s.get("pix_fmt"))
+            field("Color space",   s.get("color_space"))
+            field("Color range",   s.get("color_range"))
+            field("Color primaries",s.get("color_primaries"))
+            field("Transfer",      s.get("color_transfer"))
+            field("Bit depth",     s.get("bits_per_raw_sample"),
+                  "per channel")
+            avg = _fmt_fps(s.get("avg_frame_rate", ""))
+            r   = _fmt_fps(s.get("r_frame_rate", ""))
+            fps_note = f"real base: {r}" if r and r != avg else ""
+            field("Frame rate",    f"{avg} fps", fps_note)
+            fo = s.get("field_order", "")
+            field("Field order",   fo if fo and fo != "unknown" else None)
+            if _is_interlaced(s):
+                field("Interlaced",    "yes")
+            sbr = int(s.get("bit_rate") or 0)
+            field("Bitrate",       f"{sbr // 1000} kb/s" if sbr else None)
+            frames = s.get("nb_frames") or s.get("nb_read_frames")
+            field("Frames",        frames)
+            for k in ("title", "handler_name", "encoder"):
+                v = stags.get(k) or stags.get(k.upper())
+                if v:
+                    field(k.replace("_", " ").title(), v)
+
         elif ctype == "audio":
-            ch = stream.get("channels", "?")
-            rate = stream.get("sample_rate", "?")
-            print(f"Audio [{idx}]  : {codec}  {ch}ch  {rate} Hz")
+            as_count += 1
+            section(f"Audio stream #{idx}"
+                    + (f"  [{lang}]" if lang else ""))
+            field("Codec",         codec)
+            field("Profile",       s.get("profile"))
+            field("Sample rate",   f"{s.get('sample_rate')} Hz"
+                  if s.get("sample_rate") else None)
+            ch = s.get("channels")
+            layout = s.get("channel_layout", "")
+            field("Channels",      f"{ch}"
+                  + (f"  ({layout})" if layout else ""))
+            field("Bit depth",     s.get("bits_per_sample") or
+                                   s.get("bits_per_raw_sample"),
+                  "per sample")
+            abr = int(s.get("bit_rate") or 0)
+            field("Bitrate",       f"{abr // 1000} kb/s" if abr else None)
+            for k in ("title", "handler_name"):
+                v = stags.get(k) or stags.get(k.upper())
+                if v:
+                    field(k.replace("_", " ").title(), v)
+
+        elif ctype == "subtitle":
+            ss_count += 1
+            section(f"Subtitle stream #{idx}"
+                    + (f"  [{lang}]" if lang else ""))
+            field("Codec",  codec)
+            t = stags.get("title") or stags.get("TITLE")
+            field("Title",  t)
+
+        else:
+            section(f"Stream #{idx}  [{ctype}]")
+            field("Codec",  codec)
+
+    print()
 
 
 def cmd_convert(args):
@@ -197,18 +333,17 @@ def cmd_concat(args):
         os.unlink(flist_path)
 
 
-def cmd_trim(args):
+def cmd_clamp(args):
     _require("ffmpeg")
-    output = args.output or _default_output(args.file, "_trim.mp4")
-    _run([
-        "ffmpeg",
-        "-i", args.file,
-        "-ss", args.start,
-        "-to", args.end,
-        "-vcodec", "libx264", "-acodec", "aac",
-        output,
-    ])
-    print(f"Trimmed: {output}")
+    output = args.output or _default_output(args.file, "_clamp.mp4")
+    cmd = ["ffmpeg", "-i", args.file]
+    if args.start:
+        cmd += ["-ss", args.start]
+    if args.end:
+        cmd += ["-to", args.end]
+    cmd += ["-vcodec", "libx264", "-acodec", "aac", output]
+    _run(cmd)
+    print(f"Clamped: {output}")
 
 
 def cmd_thumb(args):
@@ -453,6 +588,473 @@ def cmd_catalog(args):
 
 
 # ---------------------------------------------------------------------------
+# Normalise
+# ---------------------------------------------------------------------------
+
+# ffprobe codec names differ from the ffmpeg encoder names
+_VCODEC_PROBE = {"libx264": "h264", "libx265": "hevc", "libvpx-vp9": "vp9"}
+_ACODEC_PROBE = {"libmp3lame": "mp3", "libopus": "opus"}
+
+
+def _is_interlaced(stream):
+    field_order = stream.get("field_order", "progressive")
+    return field_order not in ("progressive", "unknown", "")
+
+
+def _scale_filter(target_w, target_h):
+    """Return an ffmpeg vf scale+pad expression that fits within target_w×target_h
+    using lanczos resampling (good for both up- and down-scaling), then pads to
+    the exact target dimensions with black bars to maintain aspect ratio."""
+    return (
+        f"scale={target_w}:{target_h}"
+        ":force_original_aspect_ratio=decrease"
+        ":flags=lanczos"
+        f",pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black"
+    )
+
+
+def _tool_version(tool):
+    """Return the version string for *tool* (e.g. 'ffmpeg 6.1.1'), or 'unknown'."""
+    try:
+        out = subprocess.check_output(
+            [tool, "-version"], stderr=subprocess.STDOUT
+        ).decode(errors="replace")
+        first = out.splitlines()[0]          # e.g. "ffmpeg version 6.1.1 Copyright ..."
+        # grab everything up to the first "Copyright" / "built" clause
+        return first.split("Copyright")[0].split(" built")[0].strip()
+    except Exception:
+        return f"{tool} (unknown version)"
+
+
+def _fmt_elapsed(secs):
+    """Format elapsed seconds as 'Xm Ys' or 'Xs'."""
+    secs = int(secs)
+    m, s = divmod(secs, 60)
+    return f"{m}m {s:02d}s" if m else f"{s}s"
+
+
+def _norm_probe(path):
+    """Probe *path* and return a compact summary dict for the normalise report."""
+    e = {
+        "size": 0, "format": "", "duration": 0.0, "bitrate": 0,
+        "video_codec": "", "width": 0, "height": 0, "fps": "",
+        "audio_codec": "", "channels": "", "interlaced": False,
+    }
+    try:
+        e["size"] = os.path.getsize(path)
+        data = _probe(path)
+        fmt = data.get("format", {})
+        e["format"]   = fmt.get("format_name", "").split(",")[0]
+        e["duration"] = float(fmt.get("duration") or 0)
+        e["bitrate"]  = int(fmt.get("bit_rate")   or 0)
+        for s in data.get("streams", []):
+            ctype = s.get("codec_type")
+            if ctype == "video" and not e["video_codec"]:
+                e["video_codec"] = s.get("codec_name", "")
+                e["width"]       = int(s.get("width",  0))
+                e["height"]      = int(s.get("height", 0))
+                e["fps"]         = _fmt_fps(s.get("avg_frame_rate", ""))
+                e["interlaced"]  = _is_interlaced(s)
+            elif ctype == "audio" and not e["audio_codec"]:
+                e["audio_codec"] = s.get("codec_name", "")
+                e["channels"]    = s.get("channels", "")
+    except Exception:
+        pass
+    return e
+
+
+def _run_info_section(run_info):
+    """Render the collapsible Run Information section, or empty string if no info."""
+    if not run_info:
+        return ""
+
+    def row(k, v):
+        return f'<tr><td>{k}</td><td>{v}</td></tr>'
+
+    cfg_rows = "".join([
+        row("Target format",   run_info.get("target_fmt", "—")),
+        row("Video codec",     run_info.get("vcodec", "—")),
+        row("Audio codec",     run_info.get("acodec", "—")),
+        row("CRF",             run_info.get("crf", "—")),
+        row("Preset",          run_info.get("preset", "—")),
+        row("Audio bitrate",   run_info.get("abitrate", "—")),
+        row("Target resolution", run_info.get("target_res", "—")),
+        row("Deinterlace",     run_info.get("deinterlace", "—")),
+        row("Originals dir",   run_info.get("orig_dir", "—")),
+        row("",                ""),
+        row("ffmpeg",          run_info.get("ffmpeg_ver", "—")),
+        row("ffprobe",         run_info.get("ffprobe_ver", "—")),
+        row("Python",          run_info.get("python_ver", "—")),
+        row("",                ""),
+        row("Total run time",  run_info.get("total_elapsed", "—")),
+        row("Config files",    "<br>".join(run_info.get("config_files", []) or ["(none)"])),
+    ])
+
+    return f"""
+<details>
+  <summary>Run information</summary>
+  <br>
+  <table class="cfg-table">
+    <tbody>{cfg_rows}</tbody>
+  </table>
+</details>"""
+
+
+def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None):
+    """Render the normalise run results as a self-contained HTML report."""
+    now    = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    absd   = os.path.abspath(directory)
+
+    conv   = [r for r in results if r["status"] == "converted"]
+    skipped= [r for r in results if r["status"] == "skipped"]
+    errors = [r for r in results if r["status"] == "error"]
+
+    size_before = sum(r["before"]["size"] for r in conv)
+    size_after  = sum(r["after"]["size"]  for r in conv if r["after"])
+    saved       = size_before - size_after
+    saved_pct   = (saved / size_before * 100) if size_before else 0
+    saved_sign  = "+" if saved < 0 else ""   # negative saved = grew
+
+    def _cell(e):
+        if not e:
+            return "—"
+        res = f'{e["width"]}×{e["height"]}' if e["width"] else "—"
+        fps = e["fps"] or "—"
+        vc  = e["video_codec"] or "—"
+        ac  = e["audio_codec"] or "—"
+        ch  = f' {e["channels"]}ch' if e["channels"] else ""
+        br  = f'{e["bitrate"]//1000} kb/s' if e["bitrate"] else "—"
+        dur = _fmt_duration(e["duration"]) if e["duration"] else "—"
+        il  = ' <span class="tag">interlaced</span>' if e.get("interlaced") else ""
+        return (
+            f'<span class="vc">{vc}</span>{il} · {res} · {fps} fps<br>'
+            f'<span class="sub">{ac}{ch} · {br} · {dur} · {_fmt_size(e["size"])}</span>'
+        )
+
+    def _delta(r):
+        if not r["after"]:
+            return "—"
+        d = r["after"]["size"] - r["before"]["size"]
+        pct = (d / r["before"]["size"] * 100) if r["before"]["size"] else 0
+        cls = "pos" if d < 0 else "neg"
+        sign = "" if d < 0 else "+"
+        return f'<span class="{cls}">{sign}{_fmt_size(d)}<br>{sign}{pct:.1f}%</span>'
+
+    def _elapsed_cell(r):
+        e = r.get("elapsed")
+        if e is None:
+            return "—"
+        spd = ""
+        if r["before"]["duration"] and e > 0:
+            ratio = r["before"]["duration"] / e
+            spd = f'<br><span class="sub">{ratio:.1f}× realtime</span>'
+        return f"{_fmt_elapsed(e)}{spd}"
+
+    conv_rows = "\n".join(
+        f'<tr>'
+        f'<td class="path">{r["path"]}</td>'
+        f'<td class="detail">{_cell(r["before"])}</td>'
+        f'<td class="detail">{_cell(r["after"])}</td>'
+        f'<td class="r delta">{_delta(r)}</td>'
+        f'<td class="r elapsed">{_elapsed_cell(r)}</td>'
+        f'<td class="reasons">{", ".join(r["reasons"])}</td>'
+        f'</tr>'
+        for r in conv
+    )
+    skip_rows = "\n".join(
+        f'<tr><td class="path">{r["path"]}</td><td class="detail">{_cell(r["before"])}</td></tr>'
+        for r in skipped
+    )
+    err_rows = "\n".join(
+        f'<tr><td class="path">{r["path"]}</td>'
+        f'<td class="err">{r.get("error_msg","")}</td></tr>'
+        for r in errors
+    )
+
+    dry_banner = '<div class="dry-banner">Dry run — no files were changed</div>' if dry_run else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Normalise Report — {absd}</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        font-size:13px;background:#f5f5f7;color:#1d1d1f}}
+  header{{background:#1d1d1f;color:#f5f5f7;padding:20px 28px}}
+  header h1{{font-size:18px;font-weight:600}}
+  header p{{font-size:12px;color:#a1a1a6;margin-top:4px}}
+  .dry-banner{{background:#c0392b;color:#fff;padding:8px 28px;font-weight:600}}
+  .summary{{display:flex;gap:20px;padding:16px 28px;background:#fff;
+            border-bottom:1px solid #d2d2d7;flex-wrap:wrap}}
+  .stat{{display:flex;flex-direction:column;min-width:80px}}
+  .stat .val{{font-size:22px;font-weight:600}}
+  .stat .lbl{{font-size:11px;color:#6e6e73;margin-top:2px}}
+  .stat.save .val{{color:#27ae60}}
+  .stat.grow .val{{color:#c0392b}}
+  .stat.warn .val{{color:#e67e22}}
+  .wrap{{padding:20px 28px;display:flex;flex-direction:column;gap:24px}}
+  h2{{font-size:14px;font-weight:600;margin-bottom:8px;color:#1d1d1f}}
+  table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;
+         overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+  thead th{{background:#e8e8ed;padding:8px 10px;text-align:left;
+            font-weight:600;font-size:12px;white-space:nowrap}}
+  th.r,td.r{{text-align:right}}
+  tbody tr:nth-child(even){{background:#fafafa}}
+  tbody tr:hover{{background:#eef4ff}}
+  td{{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top}}
+  td.path{{font-family:"SF Mono","Fira Code",monospace;font-size:12px;
+           max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+  td.detail{{font-size:12px;min-width:220px}}
+  td.delta,td.elapsed{{font-size:12px;white-space:nowrap}}
+  td.reasons{{font-size:11px;color:#6e6e73}}
+  .cfg-table{{width:auto;min-width:400px}}
+  .cfg-table td:first-child{{font-weight:600;white-space:nowrap;padding-right:24px}}
+  .cfg-table td{{border:none;padding:4px 10px}}
+  td.err{{color:#c0392b;font-size:12px}}
+  .vc{{font-weight:600}}
+  .sub{{color:#6e6e73}}
+  .pos{{color:#27ae60}}
+  .neg{{color:#c0392b}}
+  .tag{{display:inline-block;background:#f0e0d0;color:#c0392b;
+        border-radius:3px;padding:0 4px;font-size:10px}}
+  details summary{{cursor:pointer;font-size:14px;font-weight:600;
+                   padding:8px 0;color:#1d1d1f;list-style:none}}
+  details summary::-webkit-details-marker{{display:none}}
+  details summary::before{{content:"▶ "}}
+  details[open] summary::before{{content:"▼ "}}
+  footer{{padding:12px 28px;font-size:11px;color:#6e6e73}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Normalise Report</h1>
+  <p>{absd}</p>
+  <p>Target: {target} · Originals → {orig_dir}</p>
+</header>
+{dry_banner}
+<div class="summary">
+  <div class="stat"><span class="val">{len(results)}</span><span class="lbl">Scanned</span></div>
+  <div class="stat"><span class="val">{len(conv)}</span><span class="lbl">Converted</span></div>
+  <div class="stat"><span class="val">{len(skipped)}</span><span class="lbl">Skipped</span></div>
+  {"" if not errors else f'<div class="stat warn"><span class="val">{len(errors)}</span><span class="lbl">Errors</span></div>'}
+  <div class="stat"><span class="val">{_fmt_size(size_before)}</span><span class="lbl">Before</span></div>
+  <div class="stat"><span class="val">{_fmt_size(size_after)}</span><span class="lbl">After</span></div>
+  <div class="stat {'save' if saved>=0 else 'grow'}">
+    <span class="val">{saved_sign}{_fmt_size(abs(saved))}</span>
+    <span class="lbl">{'Saved' if saved>=0 else 'Grew'} ({saved_sign}{saved_pct:.1f}%)</span>
+  </div>
+</div>
+<div class="wrap">
+{"" if not conv else f'''
+<section>
+  <h2>Converted ({len(conv)})</h2>
+  <table>
+    <thead><tr>
+      <th>File</th><th>Before</th><th>After</th>
+      <th class="r">Size Δ</th><th class="r">Time</th><th>Changes</th>
+    </tr></thead>
+    <tbody>{conv_rows}</tbody>
+  </table>
+</section>'''}
+{"" if not errors else f'''
+<section>
+  <h2>Errors ({len(errors)})</h2>
+  <table>
+    <thead><tr><th>File</th><th>Error</th></tr></thead>
+    <tbody>{err_rows}</tbody>
+  </table>
+</section>'''}
+{"" if not skipped else f'''
+<details>
+  <summary>Already normalised — skipped ({len(skipped)})</summary>
+  <br>
+  <table>
+    <thead><tr><th>File</th><th>Details</th></tr></thead>
+    <tbody>{skip_rows}</tbody>
+  </table>
+</details>'''}
+{_run_info_section(run_info)}
+</div>
+<footer>Generated {now} · video normalise</footer>
+</body>
+</html>"""
+
+
+def cmd_normalise(args):
+    _require("ffmpeg", "ffprobe")
+
+    directory = args.directory
+    if not os.path.isdir(directory):
+        sys.exit(f"Error: not a directory: {directory}")
+
+    cfg = _load_config(directory)
+    def gcfg(section, key, fallback):
+        return _vcfg(section, key, fallback, cfg=cfg)
+
+    target_w    = int(gcfg("normalise", "target_width",   "1280"))
+    target_h    = int(gcfg("normalise", "target_height",  "720"))
+    target_fmt  = gcfg("normalise", "format",         "mp4")
+    vcodec      = gcfg("normalise", "video_codec",    "libx264")
+    acodec      = gcfg("normalise", "audio_codec",    "aac")
+    preset      = gcfg("normalise", "video_preset",   "medium")
+    crf         = gcfg("normalise", "video_crf",      "23")
+    abitrate    = gcfg("normalise", "audio_bitrate",  "128k")
+    deinterlace = gcfg("normalise", "deinterlace",    "auto").lower()
+    orig_dir    = os.path.expanduser(gcfg("normalise", "original_dir", "/tmp/video-originals"))
+    report_path = args.output or os.path.join(directory, "normalise-report.html")
+
+    want_vc = _VCODEC_PROBE.get(vcodec, vcodec)
+    want_ac = _ACODEC_PROBE.get(acodec, acodec)
+    target_str = f"{vcodec} {target_w}×{target_h} / {acodec} .{target_fmt}"
+
+    # Collect tool versions and config metadata for the report
+    ffmpeg_ver  = _tool_version("ffmpeg")
+    ffprobe_ver = _tool_version("ffprobe")
+    python_ver  = f"Python {sys.version.split()[0]}"
+    cfg_paths   = [os.path.join(BCCFG, "video.ini")]
+    local_ini   = os.path.join(os.path.abspath(directory), "video.ini")
+    if os.path.isfile(local_ini):
+        cfg_paths.append(local_ini)
+
+    print(f"Normalizing : {os.path.abspath(directory)}")
+    print(f"Target      : {target_str}")
+    print(f"Originals   → {orig_dir}")
+    print(f"Tools       : {ffmpeg_ver}  |  {ffprobe_ver}")
+    if args.dry_run:
+        print("(dry run — no files will be changed)")
+    print()
+
+    results = []
+    run_start = time.monotonic()
+
+    for root, dirs, files in os.walk(directory):
+        dirs.sort()
+        for fname in sorted(files):
+            if os.path.splitext(fname)[1].lower() not in VIDEO_EXTENSIONS:
+                continue
+
+            full_path = os.path.join(root, fname)
+            rel_path  = os.path.relpath(full_path, directory)
+
+            before = _norm_probe(full_path)
+            if not before["video_codec"]:
+                print(f"  [error]   {rel_path}: probe failed or no video stream")
+                results.append({"path": rel_path, "status": "error",
+                                 "before": before, "after": None, "elapsed": None,
+                                 "reasons": [], "error_msg": "probe failed"})
+                continue
+
+            needs_deint  = deinterlace == "yes" or (deinterlace == "auto" and before["interlaced"])
+            needs_scale  = (before["width"] != target_w or before["height"] != target_h)
+            needs_vcodec = (before["video_codec"] != want_vc)
+            needs_acodec = (before["audio_codec"] != want_ac)
+            needs_fmt    = (target_fmt not in before["format"])
+            already_ok   = not any([needs_vcodec, needs_acodec, needs_scale, needs_fmt, needs_deint])
+
+            if already_ok and not args.force:
+                print(f"  [ok]      {rel_path}")
+                results.append({"path": rel_path, "status": "skipped",
+                                 "before": before, "after": before,
+                                 "reasons": [], "elapsed": None})
+                continue
+
+            reasons = []
+            if needs_vcodec: reasons.append(f"vcodec {before['video_codec']}→{want_vc}")
+            if needs_acodec: reasons.append(f"acodec {before['audio_codec']}→{want_ac}")
+            if needs_scale:  reasons.append(f"res {before['width']}×{before['height']}→{target_w}×{target_h}")
+            if needs_fmt:    reasons.append(f"format {before['format']}→{target_fmt}")
+            if needs_deint:  reasons.append("deinterlace")
+            if args.force and already_ok: reasons.append("forced")
+
+            print(f"  [convert] {rel_path}  ({', '.join(reasons)})")
+
+            if args.dry_run:
+                results.append({"path": rel_path, "status": "converted",
+                                 "before": before, "after": None,
+                                 "reasons": reasons, "elapsed": None})
+                continue
+
+            backup_path = os.path.join(orig_dir, rel_path)
+            os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
+            out_name = os.path.splitext(fname)[0] + f".{target_fmt}"
+            out_path = os.path.join(root, out_name)
+
+            try:
+                shutil.move(full_path, backup_path)
+
+                vf_parts = []
+                if needs_deint:
+                    vf_parts.append("yadif=mode=0")
+                if needs_scale or needs_deint:
+                    vf_parts.append(_scale_filter(target_w, target_h))
+
+                cmd = ["ffmpeg", "-i", backup_path]
+                if vf_parts:
+                    cmd += ["-vf", ",".join(vf_parts)]
+                cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
+                        "-acodec", acodec, "-b:a", abitrate, out_path]
+
+                t0 = time.monotonic()
+                _run(cmd)
+                elapsed = time.monotonic() - t0
+
+                after = _norm_probe(out_path)
+                print(f"             → {_fmt_elapsed(elapsed)}", end="")
+                if before["duration"] and elapsed > 0:
+                    print(f"  ({before['duration'] / elapsed:.1f}× realtime)", end="")
+                print()
+                results.append({"path": rel_path, "status": "converted",
+                                 "before": before, "after": after,
+                                 "reasons": reasons, "elapsed": elapsed})
+
+            except Exception as exc:
+                msg = str(exc)
+                print(f"  [error]   {rel_path}: {msg}")
+                if os.path.isfile(backup_path) and not os.path.isfile(full_path):
+                    shutil.move(backup_path, full_path)
+                    print(f"            original restored")
+                results.append({"path": rel_path, "status": "error",
+                                 "before": before, "after": None,
+                                 "reasons": reasons, "elapsed": None, "error_msg": msg})
+
+    total_elapsed = time.monotonic() - run_start
+    conv    = sum(1 for r in results if r["status"] == "converted")
+    skipped = sum(1 for r in results if r["status"] == "skipped")
+    errors  = sum(1 for r in results if r["status"] == "error")
+
+    print()
+    print(f"Done: {conv} converted, {skipped} skipped, {errors} errors  ({_fmt_elapsed(total_elapsed)})")
+
+    run_info = {
+        "target_fmt":     target_fmt,
+        "vcodec":         vcodec,
+        "acodec":         acodec,
+        "crf":            crf,
+        "preset":         preset,
+        "abitrate":       abitrate,
+        "target_res":     f"{target_w}×{target_h}",
+        "deinterlace":    deinterlace,
+        "orig_dir":       orig_dir,
+        "ffmpeg_ver":     ffmpeg_ver,
+        "ffprobe_ver":    ffprobe_ver,
+        "python_ver":     python_ver,
+        "total_elapsed":  _fmt_elapsed(total_elapsed),
+        "config_files":   cfg_paths,
+    }
+
+    html = _normalise_html(directory, results, target_str, orig_dir, args.dry_run, run_info)
+    with open(report_path, "w", encoding="utf-8") as fh:
+        fh.write(html)
+    print(f"Report: {report_path}")
+
+    if errors:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -466,8 +1068,10 @@ def build_parser():
     sub.required = True
 
     # info
-    p = sub.add_parser("info", help="print codec, resolution, duration, bitrate")
+    p = sub.add_parser("info", help="print detailed file, container and stream information")
     p.add_argument("file", metavar="FILE")
+    p.add_argument("--json", action="store_true",
+                   help="dump raw ffprobe JSON instead of formatted output")
 
     # convert
     default_fmt = _vcfg("convert", "default_format", "mp4")
@@ -483,12 +1087,12 @@ def build_parser():
                    help="output filename (default: output.mp4)")
     p.add_argument("files", nargs="+", metavar="FILE")
 
-    # trim
-    p = sub.add_parser("trim", help="cut to a time range")
-    p.add_argument("-s", "--start", required=True, metavar="TIME",
-                   help="start time as HH:MM:SS or seconds")
-    p.add_argument("-e", "--end", required=True, metavar="TIME",
-                   help="end time as HH:MM:SS or seconds")
+    # clamp
+    p = sub.add_parser("clamp", help="cut to a time range (start and/or end optional)")
+    p.add_argument("-s", "--start", default=None, metavar="TIME",
+                   help="start time as HH:MM:SS or seconds (default: beginning of file)")
+    p.add_argument("-e", "--end", default=None, metavar="TIME",
+                   help="end time as HH:MM:SS or seconds (default: end of file)")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
     p.add_argument("file", metavar="FILE")
 
@@ -507,6 +1111,18 @@ def build_parser():
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
                    help="output HTML file (default: catalog.html)")
 
+    # normalise
+    p = sub.add_parser("normalise",
+                       help="batch-normalise a directory tree to a web-friendly format")
+    p.add_argument("directory", metavar="DIR",
+                   help="root directory to scan and normalise recursively")
+    p.add_argument("-n", "--dry-run", action="store_true",
+                   help="show what would be done without changing any files")
+    p.add_argument("-f", "--force", action="store_true",
+                   help="re-process files that already appear normalised")
+    p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
+                   help="HTML report path (default: DIR/normalise-report.html)")
+
     return parser
 
 
@@ -515,12 +1131,13 @@ def main():
     args = parser.parse_args()
 
     dispatch = {
-        "info":    cmd_info,
-        "convert": cmd_convert,
-        "concat":  cmd_concat,
-        "trim":    cmd_trim,
-        "thumb":   cmd_thumb,
-        "catalog": cmd_catalog,
+        "catalog":   cmd_catalog,
+        "concat":    cmd_concat,
+        "convert":   cmd_convert,
+        "info":      cmd_info,
+        "normalise": cmd_normalise,
+        "thumb":     cmd_thumb,
+        "clamp":     cmd_clamp,
     }
     dispatch[args.command](args)
 

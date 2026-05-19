@@ -297,6 +297,35 @@ audio_bitrate = 128k
 # Default timestamp for `video thumb` when -t is not specified.
 # Use HH:MM:SS or a value in seconds. A few seconds in avoids black frames.
 time = 00:00:05
+
+[normalise]
+# Target container format for `video normalise`.
+format = mp4
+
+# Target resolution. Videos at any resolution are scaled to fit within this
+# box (maintaining aspect ratio, padded with black bars).
+target_width  = 1280
+target_height = 720
+
+# Video and audio codecs — H.264/AAC gives maximum browser compatibility.
+video_codec   = libx264
+audio_codec   = aac
+
+# Encoding quality and speed (see [convert] section for details).
+video_preset  = medium
+video_crf     = 23
+audio_bitrate = 128k
+
+# Where to move original files before transcoding.
+# The original directory tree structure is preserved inside this path.
+# A per-project video.ini can override this to keep originals alongside the project.
+original_dir  = /tmp/video-originals
+
+# Deinterlace interlaced / CRT-sourced footage using yadif.
+#   auto   detect via ffprobe field_order and deinterlace if interlaced
+#   yes    always deinterlace
+#   no     never deinterlace
+deinterlace   = auto
 VIDEOCFG
 
 # ---------------------------------------------------------------------------

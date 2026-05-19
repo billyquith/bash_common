@@ -28,9 +28,10 @@ All video operations are unified under the `video` command (Python3, backed by f
 - `video info FILE` — print codec, resolution, duration, and bitrate
 - `video convert [-f FORMAT] [-o OUTPUT] FILE` — transcode to MP4 (H.264/AAC), WebM, MKV, or MOV
 - `video concat [-o OUTPUT] FILE...` — join videos of the same format and resolution
-- `video trim -s START -e END [-o OUTPUT] FILE` — cut to a time range (HH:MM:SS or seconds)
+- `video clamp [-s START] [-e END] [-o OUTPUT] FILE` — cut to a time range; `-s` and `-e` are optional (omit `-s` to start from the beginning, omit `-e` to go to the end)
 - `video thumb [-t TIME] [-o OUTPUT] FILE` — extract a single frame as a PNG image
 - `video catalog [-o OUTPUT] DIR` — scan a directory tree recursively and write a self-contained HTML report (name, size, duration, format, codec, resolution, fps, audio, bitrate)
+- `video normalise [-n] [-f] DIR` — batch-normalise a directory tree to H.264/AAC MP4 at 720p; deinterlaces CRT/interlaced footage, upscales low-res content with lanczos, moves originals to a configurable backup directory. `-n` dry-run, `-f` force re-process
 
 Run `video <subcommand> -h` for per-subcommand help.
 
