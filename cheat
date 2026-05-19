@@ -1,6 +1,22 @@
-#!/bin/sh
+#!/usr/bin/env bash
+# cheat - view or edit local cheat sheets in a browser
+#
+# Opens a local cheat sheet collection (cloned into $BC_INSTALL_DIR/.cheat)
+# in Safari (macOS) or the system browser (Cygwin). Sheets are Markdown files
+# rendered via a local HTML index.
+#
+# Usage: cheat [-l] [-e] [-h] [SHEET]
+#   SHEET   open a named cheat sheet
+#   -l      list available cheat sheets
+#   -e      edit the cheat sheet collection in $EDITOR
+#   -h      show this help
 
 CHLOC="$BC_INSTALL_DIR/.cheat"
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
 
 # -e : edit
 if [ "$1" = "-e" ]; then

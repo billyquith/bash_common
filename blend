@@ -1,4 +1,21 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# blend - launch Blender using bookmarked directories
+#
+# Reads DIR_blender and DIR_blconfig from ~/.sdirs (set via bookmark `bs`).
+# Optionally adds DIR_gameplay tools to PATH before launching.
+# All arguments are passed through to the Blender executable.
+#
+# Usage: blend [BLENDER_ARGS...]
+#   -h   show this help
+#
+# Required bookmarks:
+#   DIR_blender   path to Blender.app/Contents
+#   DIR_blconfig  path to Blender config dir (~/Library/Application Support/Blender/X.YY)
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
 
 source $HOME/.sdirs
 

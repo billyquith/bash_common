@@ -1,4 +1,27 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
+"""
+cookies - read, filter, and export Safari binary cookie files
+
+Parses the binary Binarycookies format used by Safari on macOS. Can dump
+all cookies as human-readable text, export them to JSON, or filter the live
+cookie file by domain whitelist or blacklist (restarts cookied automatically).
+
+Usage:
+  cookies [OPTIONS] FILE
+
+  FILE   path to Safari's binary cookies file, typically:
+         ~/Library/Cookies/Cookies.binarycookies
+
+Options:
+  -d, --dump               print all cookies to stdout
+  -e FILE, --export FILE   export cookies to JSON
+  -b DOMAIN..., --blacklist DOMAIN...
+                           remove cookies for the given domains
+  -w DOMAIN..., --whitelist DOMAIN...
+                           keep only cookies for the given domains
+  -v                       increase verbosity (use twice for debug)
+  -h, --help               show this help
+"""
 
 import argparse
 import subprocess

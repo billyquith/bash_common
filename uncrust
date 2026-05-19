@@ -1,10 +1,29 @@
 #!/usr/bin/env bash
+# uncrust - reformat C/C++ source files using Uncrustify
+#
+# Applies the Allman-style uncrustify config (source_code/allman.uncrust.cfg)
+# to a single file or recursively to all .h/.hpp/.inl/.cpp files in a
+# directory tree.
+#
+# Usage: uncrust PATH [-h]
+#   PATH   a source file or a directory to reformat recursively
+#   -h     show this help
+#
+# Requires: uncrustify (install via brew or apt-get)
+
+usage() {
+    echo "Usage: $(basename $0) PATH"
+    echo "  PATH   source file or directory to reformat"
+    echo "  -h     show this help"
+}
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
 
 if [ ! -n "$1" ]; then
-    echo "Syntax is: uncrust dirname filesuffix"
-    echo "Syntax is: uncrust filename"
-    echo "Example: recurse.sh temp cpp"
-    exit 1
+    usage; exit 1
 fi
 
 SCRIPTPATH=$(cd $(dirname $0) ; pwd -P)

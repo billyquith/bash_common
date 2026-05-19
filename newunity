@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+# newunity - scaffold a new Unity project directory structure
+#
+# Run inside the root of a new Unity project. Initialises git (if not already
+# done), adds a Unity-specific .gitignore, and creates the standard Assets
+# subdirectory layout (Audio, Models, Prefabs, Scenes, Scripts, etc.).
+#
+# Usage: newunity [-h]
+#   -h   show this help
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
 
 createGitIgnore () {
     cat <<EOM > .gitignore    

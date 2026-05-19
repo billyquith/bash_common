@@ -1,6 +1,26 @@
 #!/usr/bin/env python3
 """
-mrename -v 'The Wire \[1x(\d+)\] (.+)\.(\w+)' '${2} S01E${1}.${3}'
+mrename - batch rename files using regex capture groups
+
+Matches filenames in the current directory against a regex INPUT pattern and
+renames them according to an OUTPUT template using ${N} substitution variables
+(1-based capture group index). Writes a rename.sh shell script by default
+rather than renaming directly, so you can review before applying.
+
+Usage:
+  mrename [OPTIONS] INPUT OUTPUT
+
+  INPUT    Python regex with capture groups, e.g. '(.+)\\.txt'
+  OUTPUT   Output template using \${N} substitution, e.g. '\${1}.md'
+
+Options:
+  -d, --dry      dry run: show matches without writing rename script
+  -v, --verbose  verbose output
+  -o OUTFILE     name of the shell script to write (default: rename.sh)
+  -h, --help     show this help
+
+Example:
+  mrename 'The Wire \\[1x(\\d+)\\] (.+)\\.(\\w+)' '\${2} S01E\${1}.\${3}'
 """
 
 import os

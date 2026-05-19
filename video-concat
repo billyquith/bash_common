@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
-# DEPRECATED: use `video concat` instead.
+# video-concat - join videos of the same format and resolution (DEPRECATED)
+#
+# DEPRECATED: use the `video` command instead:
 #   video concat [-o OUTPUT] FILE...
 # This script is kept for backwards compatibility only.
+#
+# Usage: video-concat [-i VIDEO]... [-o OUTPUT] [-h]
+#   -i VIDEO   add an input video (repeat for each file)
+#   -o OUTPUT  output filename (default: output.mp4)
+#   -h         show this help
 
 # Join videos of same format and size.
 # See https://stackoverflow.com/a/11175851

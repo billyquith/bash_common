@@ -1,4 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# blpy - run Python using Blender's bundled Python interpreter
+#
+# Sets up PYTHONPATH to include all of Blender's addon, module, and startup
+# script directories, then executes Blender's own python3 with any arguments
+# passed. Useful for running and testing Blender addon scripts outside of the
+# Blender UI.
+#
+# Usage: blpy [PYTHON_ARGS...]
+#   -h   show this help
+#
+# Required bookmarks (set via `bs`):
+#   DIR_blender   path to Blender.app/Contents
+#   DIR_blconfig  path to Blender config dir (~/Library/Application Support/Blender/X.YY)
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
 
 source $HOME/.sdirs
 

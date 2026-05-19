@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-# bcinit - initialise bash_common dependencies
+# bcinit - initialise bash_common
 #
-# Run once after cloning to check and install everything bash_common needs.
-# Usage: bcinit [-c]
-#   -c   check only; report missing deps but do not install
+# Run once after cloning (and again after updates) to check and install
+# everything bash_common needs: system tools (ffmpeg, ffprobe, mediainfo,
+# wget, python3), Python packages (markdown2), bundled completion scripts
+# (git, brew, etc.), and shell config in ~/.bash_profile / ~/.bashrc.
+#
+# Usage: bcinit [-c] [-h]
+#   -c   check only; report what is missing without installing anything
+#   -h   show this help
 
 SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
 source "$SCRIPTPATH/commands/helpers.sh"
@@ -11,10 +16,17 @@ source "$SCRIPTPATH/commands/colour.sh"
 
 CHECK_ONLY=0
 
-while getopts "c" OPT; do
+usage() {
+    echo "Usage: $(basename $0) [-c] [-h]"
+    echo "  -c   check only; report what is missing without installing"
+    echo "  -h   show this help"
+}
+
+while getopts "ch" OPT; do
     case "${OPT}" in
         c) CHECK_ONLY=1 ;;
-        *) echo "Usage: $(basename $0) [-c]"; exit 1 ;;
+        h) usage; exit 0 ;;
+        *) usage; exit 1 ;;
     esac
 done
 
@@ -200,6 +212,21 @@ if [ ${#MISSING_PY[@]} -gt 0 ]; then
     echo ""
     colecho -white "Installing Python packages: ${MISSING_PY[*]}"
     python3 -m pip install "${MISSING_PY[@]}"
+fi
+
+# ---------------------------------------------------------------------------
+# Bundled completion scripts
+# ---------------------------------------------------------------------------
+
+echo ""
+colecho -white "Downloading bundled completion scripts..."
+if command_exists wget; then
+    wget -q https://raw.githubusercontent.com/git/git/master/contrib/completion/git-completion.bash \
+        -O "$SCRIPTPATH/completion/git.completion.bash" \
+        && colecho -green "  [ok] " -normal "git.completion.bash" \
+        || colecho -red "  [fail] " -normal "git.completion.bash (check network)"
+else
+    colecho -ye "  (skipping: wget not found — run bcinit again after installing wget)"
 fi
 
 echo ""

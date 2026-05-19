@@ -1,7 +1,22 @@
 #!/usr/bin/env bash
-# Android application support for Unity
-# 	= config files in ~ & .
-# 	- Captures log.
+# uadb - Android ADB helper for Unity projects
+#
+# Wraps ADB to install, run, uninstall, and capture logs for Android apps
+# built with Unity. Configuration is stored in .uadb (local) and ~/.uadb
+# (global) files, with modal config selection for multi-device workflows.
+#
+# Usage: uadb [-c CONFIG] [-h] [-i] [-u] [-r] [-l [OPTS]] [--cmd CMDS] ...
+#   -c CONFIG   select a named config (.uadb_CONFIG)
+#   -h          show help and current config values
+#   -i          install APK to device
+#   -u          uninstall package from device
+#   -r          run package on device
+#   -l [OPTS]   capture logcat output to adblog.txt
+#   --cmd CMDS  pass commands directly to ADB
+#   --list      list installed third-party packages
+#   --dump      dump package info
+#   --act       show launcher activity for package
+#
 # ADB docs: https://developer.android.com/studio/command-line/adb
 
 CONFIGFILE=.uadb

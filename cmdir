@@ -1,14 +1,33 @@
-#! /usr/bin/env bash
+#!/usr/bin/env bash
+# cmdir - create a new CMake build directory with a chosen generator
+#
+# Creates BUILD_DIR, enters it, and runs cmake with the specified generator
+# against the parent directory (..). Useful for setting up an out-of-source
+# build alongside a project root.
+#
+# Usage: cmdir BUILD_DIR GENERATOR [-h]
+#   BUILD_DIR   name of the build directory to create
+#   GENERATOR   CMake generator, e.g. Ninja, "Unix Makefiles", Xcode
+#   -h          show this help
+#
+# Example: cmdir build Ninja
 
-# cmake.sh <build dir> <code gen>
-# cmake.sh build Ninja
+usage() {
+    echo "Usage: $(basename $0) BUILD_DIR GENERATOR"
+    echo "  BUILD_DIR   directory to create for the build"
+    echo "  GENERATOR   CMake generator (e.g. Ninja, Xcode)"
+    echo "Example: $(basename $0) build Ninja"
+}
 
 DIR=$1
 GEN=$2
 
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    usage; exit 0
+fi
+
 if [ -z $DIR ]; then
-    echo "$(basename $0) <build dir> <code gen>"
-    exit 0
+    usage; exit 1
 fi
 
 if [ -d $DIR ]; then

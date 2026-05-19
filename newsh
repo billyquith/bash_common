@@ -1,9 +1,24 @@
 #!/usr/bin/env bash
+# newsh - create a new Bash script from a starter template
+#
+# Creates an executable Bash script at the given path, pre-filled with a
+# standard bash_common template including a usage() function and getopts
+# skeleton. The file is made executable automatically.
+#
+# Usage: newsh FILENAME [-h]
+#   FILENAME   path/name for the new script
+#   -h         show this help
+
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+fi
 
 FNAME="$1"
 
 if [ -z "$FNAME" ]; then
-    echo "No name given"
+    echo "Error: no filename given"
+    echo "Usage: $(basename $0) FILENAME"
     exit 1
 fi
 
