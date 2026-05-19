@@ -2,7 +2,7 @@
 BASH_COMMON README
 ------------------
 
-This is a collection of scripts to quickly set up a BASH environment. It has a bias 
+This is a collection of scripts to quickly set up a Bash environment. It has a bias
 towards game development. Features (non-exhaustive) include:
 
 - Directory bookmarks.
@@ -51,6 +51,34 @@ In your `~/.bashrc` ensure that `bash_common/.bashrc` is sourced:
 
 - `EDITOR` : default text/source editor to use.
 - `BC_INSTALL_DIR` : where this lives, bin dir.
+
+## Why Bash?
+
+macOS switched its default shell to zsh in Catalina (10.15), but this was driven by
+licensing: Bash 3.2 (2007) is the last version Apple could ship under GPLv2, and they
+were unwilling to bundle the GPLv3-licensed Bash 4+. The switch was a licensing decision,
+not a technical one.
+
+Bash remains the right choice here because:
+
+- **Portability** — Bash is the de facto standard on Linux, CI runners, Docker containers,
+  and most cloud/server environments. Scripts written here work everywhere without
+  modification.
+- **Maturity** — Bash 5 is actively maintained and available via Homebrew on macOS
+  (`brew install bash`). Over 40 years of shell scripting convention and tooling support it.
+- **Ubiquity** — `#!/usr/bin/env bash` is universally understood. Most documentation,
+  examples, and Stack Overflow answers are written for Bash.
+
+macOS users should install a modern Bash and set it as their shell:
+
+```bash
+brew install bash
+# Add /opt/homebrew/bin/bash (or /usr/local/bin/bash) to /etc/shells, then:
+chsh -s /opt/homebrew/bin/bash
+```
+
+The system Bash at `/bin/bash` (3.2) is kept for compatibility with macOS scripts but
+bash_common targets Bash 4+.
 
 ## Info
 
