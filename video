@@ -54,6 +54,42 @@ _BCCONFIG_NAME = ".bcconfig"
 # Each entry: (key, default, description).
 # Consumed by `bcconfig --init` to generate a .bcconfig template.
 # Defaults here must match the fallbacks used in _vcfg() / gcfg() calls below.
+#
+# Default encoding rationale
+# --------------------------
+# Goal: quality archive of mixed-source footage (480p–1080p) that won't be
+# played on 4K screens. Priority is good quality at reasonable file size;
+# encode time is secondary since files are encoded once.
+#
+# video_codec = libx264 (H.264)
+#   Universal hardware decode support on every GPU, phone, and browser.
+#   VP9/WebM and H.265 have patchier hardware decoders, which matters when
+#   playing multiple streams simultaneously. H.264 is the safe archive choice.
+#
+# video_crf = 20
+#   CRF 23 is the ffmpeg default but is tuned for web delivery (acceptable
+#   quality, small files). CRF 20 is noticeably better quality (~50% larger
+#   than CRF 23) while still compressing bloated/inefficient sources hard.
+#   CRF 18 would be near-lossless but produces unnecessarily large files.
+#
+# video_preset = slow
+#   At the same CRF, a slower preset finds more efficient ways to encode,
+#   producing smaller files at identical quality. Since we encode once and
+#   play back many times, the extra encode time is worth it. `slow` gives
+#   most of the benefit of `slower`/`veryslow` without extreme encode times.
+#
+# audio_codec = aac / audio_bitrate = 160k
+#   AAC has universal container and device support. 160k is a meaningful step
+#   up from 128k for archive quality with negligible extra storage cost.
+#   192k+ offers diminishing returns for typical speech/mixed audio.
+#
+# target resolution = 1280×720 (normalise default)
+#   720p is a pragmatic floor: re-encodes 480p sources with reasonable
+#   upscaling (1.5×, lanczos), and downscales HD without wasting storage.
+#   Lanczos upscaling improves perceived quality over nearest-neighbour/
+#   bilinear but cannot add detail not present in the source. AI upscaling
+#   (e.g. Real-ESRGAN) would give better results for 480p but requires a
+#   separate tool. This is a known limitation to revisit.
 # ---------------------------------------------------------------------------
 
 BCCONFIG_SCHEMA = {
@@ -62,10 +98,10 @@ BCCONFIG_SCHEMA = {
     ],
     "video.convert": [
         ("video_codec",   "libx264",  "Video codec: libx264, libx265, libvpx-vp9"),
-        ("video_preset",  "medium",   "Encoding speed/compression: ultrafast … veryslow"),
-        ("video_crf",     "23",       "Quality (lower = better): libx264 18–28, libx265 24–28"),
+        ("video_preset",  "slow",     "Encoding speed/compression: ultrafast … veryslow"),
+        ("video_crf",     "20",       "Quality (lower = better): libx264 18–28, libx265 24–28"),
         ("audio_codec",   "aac",      "Audio codec: aac, libmp3lame, libopus"),
-        ("audio_bitrate", "128k",     "Audio bitrate (e.g. 128k, 192k, 256k)"),
+        ("audio_bitrate", "160k",     "Audio bitrate (e.g. 128k, 192k, 256k)"),
     ],
     "video.thumb": [
         ("time", "00:00:01", "Default timestamp for frame extraction (HH:MM:SS or seconds)"),
@@ -76,9 +112,9 @@ BCCONFIG_SCHEMA = {
         ("target_height", "720",                  "Target resolution height in pixels"),
         ("video_codec",   "libx264",              "Video codec: libx264, libx265, libvpx-vp9"),
         ("audio_codec",   "aac",                  "Audio codec: aac, libmp3lame, libopus"),
-        ("video_preset",  "medium",               "Encoding speed/compression: ultrafast … veryslow"),
-        ("video_crf",     "23",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
-        ("audio_bitrate", "128k",                 "Audio bitrate (e.g. 128k, 192k, 256k)"),
+        ("video_preset",  "slow",                 "Encoding speed/compression: ultrafast … veryslow"),
+        ("video_crf",     "20",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
+        ("audio_bitrate", "160k",                 "Audio bitrate (e.g. 128k, 192k, 256k)"),
         ("original_dir",  "/tmp/video-originals", "Where to move originals before transcoding"),
         ("deinterlace",   "auto",                 "Deinterlace: auto (detect), yes, no"),
     ],
@@ -350,9 +386,9 @@ def cmd_convert(args):
     fmt     = args.format.lower()
     vcodec  = args.vcodec  or _vcfg("video.convert", "video_codec",   "libx264")
     acodec  = args.acodec  or _vcfg("video.convert", "audio_codec",   "aac")
-    crf     = str(args.crf    if args.crf    is not None else _vcfg("video.convert", "video_crf",    "23"))
-    preset  = args.preset  or _vcfg("video.convert", "video_preset",  "medium")
-    abitrate= args.abitrate or _vcfg("video.convert", "audio_bitrate", "128k")
+    crf     = str(args.crf    if args.crf    is not None else _vcfg("video.convert", "video_crf",    "20"))
+    preset  = args.preset  or _vcfg("video.convert", "video_preset",  "slow")
+    abitrate= args.abitrate or _vcfg("video.convert", "audio_bitrate", "160k")
 
     SUPPORTED = {"mp4", "mkv", "mov", "webm"}
     if fmt not in SUPPORTED:
@@ -558,9 +594,9 @@ def cmd_formats(args):
     field("Default format",  _vcfg("video",         "default_format",  "mp4"))
     field("Video codec",     _vcfg("video.convert", "video_codec",     "libx264"))
     field("Audio codec",     _vcfg("video.convert", "audio_codec",     "aac"))
-    field("CRF",             _vcfg("video.convert", "video_crf",       "23"))
-    field("Preset",          _vcfg("video.convert", "video_preset",    "medium"))
-    field("Audio bitrate",   _vcfg("video.convert", "audio_bitrate",   "128k"))
+    field("CRF",             _vcfg("video.convert", "video_crf",       "20"))
+    field("Preset",          _vcfg("video.convert", "video_preset",    "slow"))
+    field("Audio bitrate",   _vcfg("video.convert", "audio_bitrate",   "160k"))
 
     # ---- Container formats ----
     section("Container formats")
@@ -1442,9 +1478,9 @@ def cmd_normalise(args):
     target_fmt  = gcfg("video.normalise", "format",         "mp4")
     vcodec      = gcfg("video.normalise", "video_codec",    "libx264")
     acodec      = gcfg("video.normalise", "audio_codec",    "aac")
-    preset      = gcfg("video.normalise", "video_preset",   "medium")
-    crf         = gcfg("video.normalise", "video_crf",      "23")
-    abitrate    = gcfg("video.normalise", "audio_bitrate",  "128k")
+    preset      = gcfg("video.normalise", "video_preset",   "slow")
+    crf         = gcfg("video.normalise", "video_crf",      "20")
+    abitrate    = gcfg("video.normalise", "audio_bitrate",  "160k")
     deinterlace = gcfg("video.normalise", "deinterlace",    "auto").lower()
     orig_dir    = os.path.expanduser(gcfg("video.normalise", "original_dir", "/tmp/video-originals"))
     report_path = args.output or os.path.join(directory, "normalise-report.html")
@@ -1668,11 +1704,11 @@ def build_parser():
     p.add_argument("--acodec", default=None, metavar="CODEC",
                    help=f"audio codec (config: {_vcfg('video.convert','audio_codec','aac')})")
     p.add_argument("--crf", default=None, metavar="N", type=int,
-                   help=f"CRF quality, lower=better (config: {_vcfg('video.convert','video_crf','23')})")
+                   help=f"CRF quality, lower=better (config: {_vcfg('video.convert','video_crf','20')})")
     p.add_argument("--preset", default=None, metavar="PRESET",
-                   help=f"encoding preset (config: {_vcfg('video.convert','video_preset','medium')})")
+                   help=f"encoding preset (config: {_vcfg('video.convert','video_preset','slow')})")
     p.add_argument("--abitrate", default=None, metavar="RATE",
-                   help=f"audio bitrate (config: {_vcfg('video.convert','audio_bitrate','128k')})")
+                   help=f"audio bitrate (config: {_vcfg('video.convert','audio_bitrate','160k')})")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
 
     # concat
