@@ -983,7 +983,10 @@ def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, targ
     needs_scale  = (before["width"] != target_w or before["height"] != target_h)
     needs_vcodec = (before["video_codec"] != want_vc)
     needs_acodec = (before["audio_codec"] != want_ac)
-    needs_fmt    = (target_fmt not in before["format"])
+    # Use the full comma-separated format_names string for detection so that a
+    # file reported as "mov,mp4,m4a,…" by ffprobe is not falsely flagged as
+    # needing conversion when the target is already "mp4".
+    needs_fmt    = (target_fmt not in before.get("format_names", before["format"]))
 
     res_current = f'{before["width"]}×{before["height"]}' if before["width"] else "—"
     res_target  = f"{target_w}×{target_h}"
@@ -1045,7 +1048,7 @@ def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, targ
 def _norm_probe(path):
     """Probe *path* and return a compact summary dict for the normalise report."""
     e = {
-        "size": 0, "format": "", "duration": 0.0, "bitrate": 0,
+        "size": 0, "format": "", "format_names": "", "duration": 0.0, "bitrate": 0,
         "video_codec": "", "width": 0, "height": 0, "fps": "",
         "audio_codec": "", "channels": "", "interlaced": False,
     }
@@ -1053,7 +1056,9 @@ def _norm_probe(path):
         e["size"] = os.path.getsize(path)
         data = _probe(path)
         fmt = data.get("format", {})
-        e["format"]   = fmt.get("format_name", "").split(",")[0]
+        raw_fmt = fmt.get("format_name", "")
+        e["format"]       = raw_fmt.split(",")[0]   # first name for display
+        e["format_names"] = raw_fmt                 # all names for detection
         e["duration"] = float(fmt.get("duration") or 0)
         e["bitrate"]  = int(fmt.get("bit_rate")   or 0)
         for s in data.get("streams", []):
@@ -1638,7 +1643,10 @@ def cmd_normalise(args):
             if args.force and already_ok:
                 reasons.append("forced")
 
-            print(f"  [convert] {rel_path}  ({', '.join(reasons)})")
+            remux_candidate = assess["compliant"] is False and len(assess["reasons"]) == 1 \
+                              and assess["reasons"][0].startswith("format ")
+            tag = "[remux]  " if remux_candidate else "[convert]"
+            print(f"  {tag} {rel_path}  ({', '.join(reasons)})")
 
             backup_path = os.path.join(orig_dir, rel_path)
             os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
@@ -1652,17 +1660,30 @@ def cmd_normalise(args):
                                   for c in assess["checks"])
                 needs_scale = any(c["label"] == "Resolution" and not c["ok"]
                                   for c in assess["checks"])
-                vf_parts = []
-                if needs_deint:
-                    vf_parts.append("yadif=mode=0")
-                if needs_scale or needs_deint:
-                    vf_parts.append(_scale_filter(target_w, target_h))
+                needs_vcodec_enc = any(c["label"] == "Video codec" and not c["ok"]
+                                       for c in assess["checks"])
+                needs_acodec_enc = any(c["label"] == "Audio codec" and not c["ok"]
+                                       for c in assess["checks"])
 
-                cmd = ["ffmpeg", "-i", backup_path]
-                if vf_parts:
-                    cmd += ["-vf", ",".join(vf_parts)]
-                cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
-                        "-acodec", acodec, "-b:a", abitrate, out_path]
+                # Stream copy (remux) when only the container format differs —
+                # all streams are already the right codec and resolution.
+                # This is lossless and takes seconds instead of minutes.
+                remux_only = not any([needs_vcodec_enc, needs_acodec_enc,
+                                      needs_scale, needs_deint])
+
+                if remux_only:
+                    cmd = ["ffmpeg", "-i", backup_path, "-c", "copy", out_path]
+                else:
+                    vf_parts = []
+                    if needs_deint:
+                        vf_parts.append("yadif=mode=0")
+                    if needs_scale or needs_deint:
+                        vf_parts.append(_scale_filter(target_w, target_h))
+                    cmd = ["ffmpeg", "-i", backup_path]
+                    if vf_parts:
+                        cmd += ["-vf", ",".join(vf_parts)]
+                    cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
+                            "-acodec", acodec, "-b:a", abitrate, out_path]
 
                 t0 = time.monotonic()
                 _run(cmd)
