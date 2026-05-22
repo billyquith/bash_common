@@ -128,7 +128,7 @@ BCCONFIG_SCHEMA = {
 def _find_bcconfig_files(cwd=None):
     """Return list of .bcconfig file paths from ~ down to cwd (root first)."""
     home = os.path.expanduser("~")
-    cwd = os.path.abspath(cwd or os.getcwd())
+    cwd  = os.path.abspath(cwd or os.getcwd())
 
     paths = []
     home_cfg = os.path.join(home, _BCCONFIG_NAME)
@@ -138,10 +138,25 @@ def _find_bcconfig_files(cwd=None):
     try:
         rel = os.path.relpath(cwd, home)
     except ValueError:
-        return paths  # different drive on Windows
+        rel = ".."  # different drive on Windows — treat as outside home
 
     if rel.startswith(".."):
-        return paths  # cwd is outside home; only home config applies
+        # cwd is outside home (e.g. external volume): walk upward from cwd to
+        # filesystem root collecting configs, then reverse so root → cwd order
+        # (cwd-level config wins over higher directories).
+        outside = []
+        current = cwd
+        while True:
+            candidate = os.path.join(current, _BCCONFIG_NAME)
+            if os.path.isfile(candidate):
+                outside.append(candidate)
+            parent = os.path.dirname(current)
+            if parent == current:   # reached filesystem root
+                break
+            current = parent
+        outside.reverse()
+        paths.extend(outside)
+        return paths
 
     parts = [p for p in rel.split(os.sep) if p and p != "."]
     current = home

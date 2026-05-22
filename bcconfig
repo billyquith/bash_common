@@ -29,26 +29,44 @@ _CONFIG_NAME = ".bcconfig"
 
 
 def _find_bcconfig_files(cwd=None):
-    """Return list of .bcconfig file paths from ~ down to cwd (root first)."""
+    """Return list of .bcconfig file paths in load order (lowest priority first).
+
+    For cwd under home: scans from ~ down to cwd.
+    For cwd outside home (e.g. an external volume): scans from ~ plus from
+    the filesystem root down to cwd, so local configs on external volumes are
+    still found and take precedence over ~/.bcconfig.
+    """
     home = os.path.expanduser("~")
-    cwd = os.path.abspath(cwd or os.getcwd())
+    cwd  = os.path.abspath(cwd or os.getcwd())
 
     paths = []
-
-    # Home-level config lives at ~/.bcconfig
     home_cfg = os.path.join(home, _CONFIG_NAME)
     if os.path.isfile(home_cfg):
         paths.append(home_cfg)
 
-    # Subdirectory configs between home and cwd
     try:
         rel = os.path.relpath(cwd, home)
     except ValueError:
-        return paths  # different drive on Windows
+        rel = ".."  # different drive on Windows — treat as outside home
 
     if rel.startswith(".."):
-        return paths  # cwd is outside home; only use home config
+        # cwd is outside home: walk upward from cwd to filesystem root
+        # collecting configs, then reverse so root → cwd order (cwd wins).
+        outside = []
+        current = cwd
+        while True:
+            candidate = os.path.join(current, _CONFIG_NAME)
+            if os.path.isfile(candidate):
+                outside.append(candidate)
+            parent = os.path.dirname(current)
+            if parent == current:   # reached filesystem root
+                break
+            current = parent
+        outside.reverse()
+        paths.extend(outside)
+        return paths
 
+    # cwd is under home: walk subdirectory by subdirectory from home to cwd.
     parts = [p for p in rel.split(os.sep) if p and p != "."]
     current = home
     for part in parts:
