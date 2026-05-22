@@ -49,6 +49,41 @@ logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
 
 _BCCONFIG_NAME = ".bcconfig"
 
+# ---------------------------------------------------------------------------
+# Config schema
+# Each entry: (key, default, description).
+# Consumed by `bcconfig --init` to generate a .bcconfig template.
+# Defaults here must match the fallbacks used in _vcfg() / gcfg() calls below.
+# ---------------------------------------------------------------------------
+
+BCCONFIG_SCHEMA = {
+    "video": [
+        ("default_format", "mp4",     "Default container format: mp4, mkv, mov, webm"),
+    ],
+    "video.convert": [
+        ("video_codec",   "libx264",  "Video codec: libx264, libx265, libvpx-vp9"),
+        ("video_preset",  "medium",   "Encoding speed/compression: ultrafast … veryslow"),
+        ("video_crf",     "23",       "Quality (lower = better): libx264 18–28, libx265 24–28"),
+        ("audio_codec",   "aac",      "Audio codec: aac, libmp3lame, libopus"),
+        ("audio_bitrate", "128k",     "Audio bitrate (e.g. 128k, 192k, 256k)"),
+    ],
+    "video.thumb": [
+        ("time", "00:00:01", "Default timestamp for frame extraction (HH:MM:SS or seconds)"),
+    ],
+    "video.normalise": [
+        ("format",        "mp4",                  "Target container format: mp4, mkv, mov, webm"),
+        ("target_width",  "1280",                 "Target resolution width in pixels"),
+        ("target_height", "720",                  "Target resolution height in pixels"),
+        ("video_codec",   "libx264",              "Video codec: libx264, libx265, libvpx-vp9"),
+        ("audio_codec",   "aac",                  "Audio codec: aac, libmp3lame, libopus"),
+        ("video_preset",  "medium",               "Encoding speed/compression: ultrafast … veryslow"),
+        ("video_crf",     "23",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
+        ("audio_bitrate", "128k",                 "Audio bitrate (e.g. 128k, 192k, 256k)"),
+        ("original_dir",  "/tmp/video-originals", "Where to move originals before transcoding"),
+        ("deinterlace",   "auto",                 "Deinterlace: auto (detect), yes, no"),
+    ],
+}
+
 
 # ---------------------------------------------------------------------------
 # User config

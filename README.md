@@ -114,11 +114,13 @@ audio_bitrate = 128k       ~/.bcconfig
 **Usage:**
 
 ```
-bcconfig                           show all effective settings
-bcconfig VIDEO                     filter to [VIDEO] and [VIDEO.*] sections
-bcconfig --files                   list source files in load order
-bcconfig --get video.convert.crf   print a single value
+bcconfig                              show all effective settings
+bcconfig VIDEO                        filter to [VIDEO] and [VIDEO.*] sections
+bcconfig --files                      list source files in load order
+bcconfig --get video.convert.crf      print a single value
 bcconfig --get video.convert.crf --fallback 23
+bcconfig --init                       create .bcconfig in cwd with all sections
+bcconfig --init video.normalise       create .bcconfig with only [video.normalise]
 ```
 
 ### Shell helper
