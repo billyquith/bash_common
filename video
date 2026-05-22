@@ -84,13 +84,13 @@ _BCCONFIG_NAME = ".bcconfig"
 #   up from 128k for archive quality with negligible extra storage cost.
 #   192k+ offers diminishing returns for typical speech/mixed audio.
 #
-# target resolution = 1280×720 (normalise default)
-#   720p is a pragmatic floor: re-encodes 480p sources with reasonable
-#   upscaling (1.5×, lanczos), and downscales HD without wasting storage.
-#   Lanczos upscaling improves perceived quality over nearest-neighbour/
-#   bilinear but cannot add detail not present in the source. AI upscaling
-#   (e.g. Real-ESRGAN) would give better results for 480p but requires a
-#   separate tool. This is a known limitation to revisit.
+# target_height = 720 (normalise default)
+#   Acts as a ceiling, not a target. Videos taller than 720p are scaled down
+#   to 720p (width auto-calculated from source aspect ratio, scale=-2:720,
+#   lanczos). Videos at or below 720p are left at their original resolution.
+#   This preserves 480p sources at 480p — upscaling would add no real quality
+#   and wastes storage. AI upscaling (e.g. Real-ESRGAN) is a known future
+#   improvement for 480p content but requires a separate tool.
 # ---------------------------------------------------------------------------
 
 BCCONFIG_SCHEMA = {
@@ -109,8 +109,7 @@ BCCONFIG_SCHEMA = {
     ],
     "video.normalise": [
         ("format",        "mp4",                  "Target container format: mp4, mkv, mov, webm"),
-        ("target_width",  "1280",                 "Target resolution width in pixels"),
-        ("target_height", "720",                  "Target resolution height in pixels"),
+        ("target_height", "720",                  "Maximum height in pixels; taller videos are scaled down (aspect preserved), shorter videos are left as-is"),
         ("video_codec",   "libx264",              "Video codec: libx264, libx265, libvpx-vp9"),
         ("audio_codec",   "aac",                  "Audio codec: aac, libmp3lame, libopus"),
         ("video_preset",  "slow",                 "Encoding speed/compression: ultrafast … veryslow"),
@@ -941,16 +940,12 @@ def _is_interlaced(stream):
     return field_order not in ("progressive", "unknown", "")
 
 
-def _scale_filter(target_w, target_h):
-    """Return an ffmpeg vf scale+pad expression that fits within target_w×target_h
-    using lanczos resampling (good for both up- and down-scaling), then pads to
-    the exact target dimensions with black bars to maintain aspect ratio."""
-    return (
-        f"scale={target_w}:{target_h}"
-        ":force_original_aspect_ratio=decrease"
-        ":flags=lanczos"
-        f",pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black"
-    )
+def _scale_filter(target_h):
+    """Return an ffmpeg vf scale expression that scales to target_h, with the
+    width auto-calculated from the source aspect ratio using lanczos resampling.
+    -2 ensures the auto-calculated width is divisible by 2 (required by most
+    codecs). Aspect ratio is always preserved — no padding or cropping."""
+    return f"scale=-2:{target_h}:flags=lanczos"
 
 
 def _tool_version(tool):
@@ -973,14 +968,17 @@ def _fmt_elapsed(secs):
     return f"{m}m {s:02d}s" if m else f"{s}s"
 
 
-def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, target_fmt):
+def _norm_assess(before, deinterlace, target_h, want_vc, want_ac, target_fmt):
     """Compare *before* probe data against normalise targets.
 
     Returns a dict with compliant (bool), reasons (list[str]), and checks
     (list of per-criterion dicts for HTML rendering).
+
+    Resolution is checked by height only — width is derived from the source
+    aspect ratio so files at the correct height are never needlessly rescaled.
     """
     needs_deint  = deinterlace == "yes" or (deinterlace == "auto" and before["interlaced"])
-    needs_scale  = (before["width"] != target_w or before["height"] != target_h)
+    needs_scale  = (before["height"] > target_h)   # clamp only — never upscale
     needs_vcodec = (before["video_codec"] != want_vc)
     needs_acodec = (before["audio_codec"] != want_ac)
     # Use the full comma-separated format_names string for detection so that a
@@ -989,7 +987,7 @@ def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, targ
     needs_fmt    = (target_fmt not in before.get("format_names", before["format"]))
 
     res_current = f'{before["width"]}×{before["height"]}' if before["width"] else "—"
-    res_target  = f"{target_w}×{target_h}"
+    res_target  = f"h={target_h}"
 
     checks = [
         {
@@ -1011,7 +1009,7 @@ def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, targ
             "ok": not needs_scale,
             "current": res_current,
             "target": res_target,
-            "fix": f"scale/pad: {res_current} → {res_target}",
+            "fix": f"scale down to h={target_h} (width auto from aspect): {res_current}",
         },
         {
             "label": "Container",
@@ -1035,7 +1033,7 @@ def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, targ
     if needs_acodec:
         reasons.append(f"acodec {before['audio_codec'] or 'none'}→{want_ac}")
     if needs_scale:
-        reasons.append(f"res {res_current}→{res_target}")
+        reasons.append(f"scale down {res_current}→{res_target}")
     if needs_fmt:
         reasons.append(f"format {before['format']}→{target_fmt}")
     if needs_deint:
@@ -1510,7 +1508,6 @@ def cmd_normalise(args):
     def gcfg(section, key, fallback):
         return _vcfg(section, key, fallback, cfg=cfg)
 
-    target_w    = int(gcfg("video.normalise", "target_width",   "1280"))
     target_h    = int(gcfg("video.normalise", "target_height",  "720"))
     target_fmt  = gcfg("video.normalise", "format",         "mp4")
     vcodec      = gcfg("video.normalise", "video_codec",    "libx264")
@@ -1524,7 +1521,7 @@ def cmd_normalise(args):
 
     want_vc = _VCODEC_PROBE.get(vcodec, vcodec)
     want_ac = _ACODEC_PROBE.get(acodec, acodec)
-    target_str = f"{vcodec} {target_w}×{target_h} / {acodec} .{target_fmt}"
+    target_str = f"{vcodec} h={target_h} (auto-width) / {acodec} .{target_fmt}"
 
     ffmpeg_ver  = _tool_version("ffmpeg")
     ffprobe_ver = _tool_version("ffprobe")
@@ -1538,7 +1535,7 @@ def cmd_normalise(args):
         "crf":            crf,
         "preset":         preset,
         "abitrate":       abitrate,
-        "target_res":     f"{target_w}×{target_h}",
+        "target_res":     f"h={target_h} (auto-width)",
         "deinterlace":    deinterlace,
         "orig_dir":       orig_dir,
         "ffmpeg_ver":     ffmpeg_ver,
@@ -1567,7 +1564,7 @@ def cmd_normalise(args):
                     entries.append({"path": rel_path, "before": before,
                                       "error": "probe failed or no video stream"})
                     continue
-                assess = _norm_assess(before, deinterlace, target_w, target_h,
+                assess = _norm_assess(before, deinterlace, target_h,
                                       want_vc, want_ac, target_fmt)
                 tag = "[ok]" if assess["compliant"] else "[change]"
                 detail = "" if assess["compliant"] else f"  ({', '.join(assess['reasons'])})"
@@ -1628,7 +1625,7 @@ def cmd_normalise(args):
                                  "reasons": [], "error_msg": "probe failed"})
                 continue
 
-            assess = _norm_assess(before, deinterlace, target_w, target_h,
+            assess = _norm_assess(before, deinterlace, target_h,
                                   want_vc, want_ac, target_fmt)
             already_ok = assess["compliant"]
 
@@ -1678,7 +1675,7 @@ def cmd_normalise(args):
                     if needs_deint:
                         vf_parts.append("yadif=mode=0")
                     if needs_scale or needs_deint:
-                        vf_parts.append(_scale_filter(target_w, target_h))
+                        vf_parts.append(_scale_filter(target_h))
                     cmd = ["ffmpeg", "-i", backup_path]
                     if vf_parts:
                         cmd += ["-vf", ",".join(vf_parts)]
