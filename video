@@ -23,7 +23,9 @@ Subcommands:
   normalise  [-n] [-f] DIR
                                batch-normalise a directory tree to a web-friendly
                                format (H.264/AAC MP4 at 720p); deinterlaces CRT
-                               footage and upscales low-res content via lanczos
+                               footage and upscales low-res content via lanczos;
+                               -n dry-run: writes a full HTML assessment report
+                               (green/red per criterion) without converting
   thumb      [-t TIME] [-H PX] [-o OUTPUT] FILE
                                extract a single frame as a PNG image
 
@@ -899,6 +901,75 @@ def _fmt_elapsed(secs):
     return f"{m}m {s:02d}s" if m else f"{s}s"
 
 
+def _norm_assess(before, deinterlace, target_w, target_h, want_vc, want_ac, target_fmt):
+    """Compare *before* probe data against normalise targets.
+
+    Returns a dict with compliant (bool), reasons (list[str]), and checks
+    (list of per-criterion dicts for HTML rendering).
+    """
+    needs_deint  = deinterlace == "yes" or (deinterlace == "auto" and before["interlaced"])
+    needs_scale  = (before["width"] != target_w or before["height"] != target_h)
+    needs_vcodec = (before["video_codec"] != want_vc)
+    needs_acodec = (before["audio_codec"] != want_ac)
+    needs_fmt    = (target_fmt not in before["format"])
+
+    res_current = f'{before["width"]}×{before["height"]}' if before["width"] else "—"
+    res_target  = f"{target_w}×{target_h}"
+
+    checks = [
+        {
+            "label": "Video codec",
+            "ok": not needs_vcodec,
+            "current": before["video_codec"] or "—",
+            "target": want_vc,
+            "fix": f"re-encode video: {before['video_codec']} → {want_vc}",
+        },
+        {
+            "label": "Audio codec",
+            "ok": not needs_acodec,
+            "current": before["audio_codec"] or "—",
+            "target": want_ac,
+            "fix": f"re-encode audio: {before['audio_codec'] or 'none'} → {want_ac}",
+        },
+        {
+            "label": "Resolution",
+            "ok": not needs_scale,
+            "current": res_current,
+            "target": res_target,
+            "fix": f"scale/pad: {res_current} → {res_target}",
+        },
+        {
+            "label": "Container",
+            "ok": not needs_fmt,
+            "current": before["format"] or "—",
+            "target": target_fmt,
+            "fix": f"remux/transcode: {before['format']} → {target_fmt}",
+        },
+        {
+            "label": "Deinterlace",
+            "ok": not needs_deint,
+            "current": "interlaced" if before["interlaced"] else "progressive",
+            "target": "progressive",
+            "fix": "deinterlace (yadif)",
+        },
+    ]
+
+    reasons = []
+    if needs_vcodec:
+        reasons.append(f"vcodec {before['video_codec']}→{want_vc}")
+    if needs_acodec:
+        reasons.append(f"acodec {before['audio_codec'] or 'none'}→{want_ac}")
+    if needs_scale:
+        reasons.append(f"res {res_current}→{res_target}")
+    if needs_fmt:
+        reasons.append(f"format {before['format']}→{target_fmt}")
+    if needs_deint:
+        reasons.append("deinterlace")
+
+    compliant = not any([needs_vcodec, needs_acodec, needs_scale, needs_fmt, needs_deint])
+    return {"compliant": compliant, "reasons": reasons, "checks": checks}
+
+
 def _norm_probe(path):
     """Probe *path* and return a compact summary dict for the normalise report."""
     e = {
@@ -964,6 +1035,177 @@ def _run_info_section(run_info):
     <tbody>{cfg_rows}</tbody>
   </table>
 </details>"""
+
+
+def _norm_check_cell(check):
+    """Render one criterion cell for the assessment report."""
+    cls = "ok" if check["ok"] else "bad"
+    cur = check["current"]
+    if check["ok"]:
+        return f'<td class="{cls}">{cur}</td>'
+    tgt = check["target"]
+    return (
+        f'<td class="{cls}" title="{check["fix"]}">'
+        f'{cur}<br><span class="fix">→ {tgt}</span></td>'
+    )
+
+
+def _normalise_plan_html(directory, entries, target, run_info=None):
+    """Render a pre-flight assessment HTML report (no conversion performed)."""
+    now  = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    absd = os.path.abspath(directory)
+
+    ok_entries  = [e for e in entries if e.get("compliant")]
+    bad_entries = [e for e in entries if not e.get("compliant") and not e.get("error")]
+    err_entries = [e for e in entries if e.get("error")]
+
+    def _detail_cell(e):
+        b = e["before"]
+        res = f'{b["width"]}×{b["height"]}' if b["width"] else "—"
+        fps = b["fps"] or "—"
+        br  = f'{b["bitrate"] // 1000} kb/s' if b["bitrate"] else "—"
+        dur = _fmt_duration(b["duration"]) if b["duration"] else "—"
+        return (
+            f'{_fmt_size(b["size"])} · {dur}<br>'
+            f'<span class="sub">{res} · {fps} fps · {br}</span>'
+        )
+
+    def _row(e):
+        if e.get("error"):
+            return (
+                f'<tr class="err-row">'
+                f'<td class="status err">✗</td>'
+                f'<td class="path" title="{e["path"]}">{e["path"]}</td>'
+                f'<td colspan="7" class="err">{e["error"]}</td>'
+                f'</tr>'
+            )
+
+        row_cls = "row-ok" if e["compliant"] else "row-bad"
+        status  = "✓" if e["compliant"] else "✗"
+        status_cls = "ok" if e["compliant"] else "bad"
+        changes = "—" if e["compliant"] else "; ".join(c["fix"] for c in e["checks"] if not c["ok"])
+        check_cells = "".join(_norm_check_cell(c) for c in e["checks"])
+        return (
+            f'<tr class="{row_cls}">'
+            f'<td class="status {status_cls}">{status}</td>'
+            f'<td class="path" title="{e["path"]}">{e["path"]}</td>'
+            f'<td class="detail">{_detail_cell(e)}</td>'
+            f'{check_cells}'
+            f'<td class="changes">{changes}</td>'
+            f'</tr>'
+        )
+
+    # Non-compliant first so the work list is at the top
+    ordered = bad_entries + ok_entries + err_entries
+    rows_html = "\n".join(_row(e) for e in ordered)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Normalise Assessment — {absd}</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        font-size:13px;background:#f5f5f7;color:#1d1d1f}}
+  header{{background:#1d1d1f;color:#f5f5f7;padding:20px 28px}}
+  header h1{{font-size:18px;font-weight:600}}
+  header p{{font-size:12px;color:#a1a1a6;margin-top:4px}}
+  .summary{{display:flex;gap:20px;padding:16px 28px;background:#fff;
+            border-bottom:1px solid #d2d2d7;flex-wrap:wrap}}
+  .stat{{display:flex;flex-direction:column;min-width:80px}}
+  .stat .val{{font-size:22px;font-weight:600}}
+  .stat .lbl{{font-size:11px;color:#6e6e73;margin-top:2px}}
+  .stat.ok .val{{color:#27ae60}}
+  .stat.bad .val{{color:#c0392b}}
+  .stat.warn .val{{color:#e67e22}}
+  .wrap{{padding:20px 28px;display:flex;flex-direction:column;gap:24px}}
+  h2{{font-size:14px;font-weight:600;margin-bottom:8px;color:#1d1d1f}}
+  table{{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;
+         overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}}
+  thead th{{background:#e8e8ed;padding:8px 10px;text-align:left;
+            font-weight:600;font-size:12px;white-space:nowrap}}
+  tbody tr:nth-child(even){{background:#fafafa}}
+  tbody tr:hover{{background:#eef4ff}}
+  tr.row-ok{{background:#f0faf4}}
+  tr.row-ok:nth-child(even){{background:#e8f5ee}}
+  tr.row-bad{{background:#fdf0f0}}
+  tr.row-bad:nth-child(even){{background:#fae8e8}}
+  tr.row-ok:hover{{background:#e0f5ea}}
+  tr.row-bad:hover{{background:#fde8e8}}
+  td{{padding:7px 10px;border-bottom:1px solid #f0f0f0;vertical-align:top}}
+  td.path{{font-family:"SF Mono","Fira Code",monospace;font-size:12px;
+           max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+  td.detail{{font-size:12px;min-width:140px}}
+  td.status{{font-weight:700;text-align:center;width:32px;font-size:14px}}
+  td.status.ok{{color:#27ae60}}
+  td.status.bad{{color:#c0392b}}
+  td.ok{{color:#1e7e34;background:rgba(39,174,96,.08)}}
+  td.bad{{color:#c0392b;background:rgba(192,57,43,.08)}}
+  td.changes{{font-size:11px;color:#6e6e73;min-width:200px;max-width:360px;
+              white-space:normal;line-height:1.4}}
+  td.err{{color:#c0392b;font-size:12px}}
+  tr.err-row{{background:#fff5f5}}
+  .fix{{font-size:11px;font-weight:600}}
+  .sub{{color:#6e6e73;font-size:11px}}
+  .cfg-table{{width:auto;min-width:400px}}
+  .cfg-table td:first-child{{font-weight:600;white-space:nowrap;padding-right:24px}}
+  .cfg-table td{{border:none;padding:4px 10px}}
+  details summary{{cursor:pointer;font-size:14px;font-weight:600;
+                   padding:8px 0;color:#1d1d1f;list-style:none}}
+  details summary::-webkit-details-marker{{display:none}}
+  details summary::before{{content:"▶ "}}
+  details[open] summary::before{{content:"▼ "}}
+  footer{{padding:12px 28px;font-size:11px;color:#6e6e73}}
+  .legend{{display:flex;gap:16px;font-size:12px;padding:0 28px 12px;color:#6e6e73}}
+  .legend span{{display:inline-flex;align-items:center;gap:6px}}
+  .swatch{{display:inline-block;width:12px;height:12px;border-radius:2px}}
+  .swatch.ok{{background:#27ae60}}
+  .swatch.bad{{background:#c0392b}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Normalise Assessment</h1>
+  <p>{absd}</p>
+  <p>Target: {target}</p>
+</header>
+<div class="summary">
+  <div class="stat"><span class="val">{len(entries)}</span><span class="lbl">Files scanned</span></div>
+  <div class="stat ok"><span class="val">{len(ok_entries)}</span><span class="lbl">Already compliant</span></div>
+  <div class="stat bad"><span class="val">{len(bad_entries)}</span><span class="lbl">Need changes</span></div>
+  {"" if not err_entries else f'<div class="stat warn"><span class="val">{len(err_entries)}</span><span class="lbl">Probe errors</span></div>'}
+</div>
+<div class="legend">
+  <span><span class="swatch ok"></span> Meets target</span>
+  <span><span class="swatch bad"></span> Needs change (fix shown in cell and Changes column)</span>
+</div>
+<div class="wrap">
+<section>
+  <h2>All files</h2>
+  <table>
+    <thead><tr>
+      <th></th>
+      <th>File</th>
+      <th>Size / duration</th>
+      <th>Video codec</th>
+      <th>Audio codec</th>
+      <th>Resolution</th>
+      <th>Container</th>
+      <th>Scan type</th>
+      <th>Changes required</th>
+    </tr></thead>
+    <tbody>
+{rows_html}
+    </tbody>
+  </table>
+</section>
+{_run_info_section(run_info)}
+</div>
+<footer>Generated {now} · video normalise --report</footer>
+</body>
+</html>"""
 
 
 def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None):
@@ -1176,18 +1418,77 @@ def cmd_normalise(args):
     want_ac = _ACODEC_PROBE.get(acodec, acodec)
     target_str = f"{vcodec} {target_w}×{target_h} / {acodec} .{target_fmt}"
 
-    # Collect tool versions and config metadata for the report
     ffmpeg_ver  = _tool_version("ffmpeg")
     ffprobe_ver = _tool_version("ffprobe")
     python_ver  = f"Python {sys.version.split()[0]}"
     cfg_paths   = _find_bcconfig_files(directory)
 
+    run_info = {
+        "target_fmt":     target_fmt,
+        "vcodec":         vcodec,
+        "acodec":         acodec,
+        "crf":            crf,
+        "preset":         preset,
+        "abitrate":       abitrate,
+        "target_res":     f"{target_w}×{target_h}",
+        "deinterlace":    deinterlace,
+        "orig_dir":       orig_dir,
+        "ffmpeg_ver":     ffmpeg_ver,
+        "ffprobe_ver":    ffprobe_ver,
+        "python_ver":     python_ver,
+        "config_files":   cfg_paths,
+    }
+
+    # ---- dry-run: assess every file and write the green/red HTML report ----
+    if args.dry_run:
+        print(f"Assessing  : {os.path.abspath(directory)}  (dry run — no files will be changed)")
+        print(f"Target     : {target_str}")
+        print()
+
+        entries = []
+        for root, dirs, files in os.walk(directory):
+            dirs.sort()
+            for fname in sorted(files):
+                if os.path.splitext(fname)[1].lower() not in VIDEO_EXTENSIONS:
+                    continue
+                full_path = os.path.join(root, fname)
+                rel_path  = os.path.relpath(full_path, directory)
+                before = _norm_probe(full_path)
+                if not before["video_codec"]:
+                    print(f"  [error]   {rel_path}: probe failed or no video stream")
+                    entries.append({"path": rel_path, "before": before,
+                                      "error": "probe failed or no video stream"})
+                    continue
+                assess = _norm_assess(before, deinterlace, target_w, target_h,
+                                      want_vc, want_ac, target_fmt)
+                tag = "[ok]" if assess["compliant"] else "[change]"
+                detail = "" if assess["compliant"] else f"  ({', '.join(assess['reasons'])})"
+                print(f"  {tag:<9} {rel_path}{detail}")
+                entries.append({"path": rel_path, "before": before, **assess})
+
+        if not entries:
+            sys.exit("No video files found.")
+
+        ok_count  = sum(1 for e in entries if e.get("compliant"))
+        bad_count = sum(1 for e in entries if not e.get("compliant") and not e.get("error"))
+        err_count = sum(1 for e in entries if e.get("error"))
+
+        html = _normalise_plan_html(directory, entries, target_str, run_info)
+        with open(report_path, "w", encoding="utf-8") as fh:
+            fh.write(html)
+
+        print()
+        print(f"Done: {ok_count} compliant, {bad_count} need changes"
+              + (f", {err_count} errors" if err_count else ""))
+        print(f"Report: {report_path}")
+        if err_count:
+            sys.exit(1)
+        return
+
     print(f"Normalizing : {os.path.abspath(directory)}")
     print(f"Target      : {target_str}")
     print(f"Originals   → {orig_dir}")
     print(f"Tools       : {ffmpeg_ver}  |  {ffprobe_ver}")
-    if args.dry_run:
-        print("(dry run — no files will be changed)")
     print()
 
     results = []
@@ -1210,12 +1511,9 @@ def cmd_normalise(args):
                                  "reasons": [], "error_msg": "probe failed"})
                 continue
 
-            needs_deint  = deinterlace == "yes" or (deinterlace == "auto" and before["interlaced"])
-            needs_scale  = (before["width"] != target_w or before["height"] != target_h)
-            needs_vcodec = (before["video_codec"] != want_vc)
-            needs_acodec = (before["audio_codec"] != want_ac)
-            needs_fmt    = (target_fmt not in before["format"])
-            already_ok   = not any([needs_vcodec, needs_acodec, needs_scale, needs_fmt, needs_deint])
+            assess = _norm_assess(before, deinterlace, target_w, target_h,
+                                  want_vc, want_ac, target_fmt)
+            already_ok = assess["compliant"]
 
             if already_ok and not args.force:
                 print(f"  [ok]      {rel_path}")
@@ -1224,21 +1522,11 @@ def cmd_normalise(args):
                                  "reasons": [], "elapsed": None})
                 continue
 
-            reasons = []
-            if needs_vcodec: reasons.append(f"vcodec {before['video_codec']}→{want_vc}")
-            if needs_acodec: reasons.append(f"acodec {before['audio_codec']}→{want_ac}")
-            if needs_scale:  reasons.append(f"res {before['width']}×{before['height']}→{target_w}×{target_h}")
-            if needs_fmt:    reasons.append(f"format {before['format']}→{target_fmt}")
-            if needs_deint:  reasons.append("deinterlace")
-            if args.force and already_ok: reasons.append("forced")
+            reasons = list(assess["reasons"])
+            if args.force and already_ok:
+                reasons.append("forced")
 
             print(f"  [convert] {rel_path}  ({', '.join(reasons)})")
-
-            if args.dry_run:
-                results.append({"path": rel_path, "status": "converted",
-                                 "before": before, "after": None,
-                                 "reasons": reasons, "elapsed": None})
-                continue
 
             backup_path = os.path.join(orig_dir, rel_path)
             os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
@@ -1248,6 +1536,10 @@ def cmd_normalise(args):
             try:
                 shutil.move(full_path, backup_path)
 
+                needs_deint = any(c["label"] == "Deinterlace" and not c["ok"]
+                                  for c in assess["checks"])
+                needs_scale = any(c["label"] == "Resolution" and not c["ok"]
+                                  for c in assess["checks"])
                 vf_parts = []
                 if needs_deint:
                     vf_parts.append("yadif=mode=0")
@@ -1291,22 +1583,7 @@ def cmd_normalise(args):
     print()
     print(f"Done: {conv} converted, {skipped} skipped, {errors} errors  ({_fmt_elapsed(total_elapsed)})")
 
-    run_info = {
-        "target_fmt":     target_fmt,
-        "vcodec":         vcodec,
-        "acodec":         acodec,
-        "crf":            crf,
-        "preset":         preset,
-        "abitrate":       abitrate,
-        "target_res":     f"{target_w}×{target_h}",
-        "deinterlace":    deinterlace,
-        "orig_dir":       orig_dir,
-        "ffmpeg_ver":     ffmpeg_ver,
-        "ffprobe_ver":    ffprobe_ver,
-        "python_ver":     python_ver,
-        "total_elapsed":  _fmt_elapsed(total_elapsed),
-        "config_files":   cfg_paths,
-    }
+    run_info["total_elapsed"] = _fmt_elapsed(total_elapsed)
 
     html = _normalise_html(directory, results, target_str, orig_dir, args.dry_run, run_info)
     with open(report_path, "w", encoding="utf-8") as fh:
@@ -1401,7 +1678,8 @@ def build_parser():
     p.add_argument("directory", metavar="DIR",
                    help="root directory to scan and normalise recursively")
     p.add_argument("-n", "--dry-run", action="store_true",
-                   help="show what would be done without changing any files")
+                   help="scan and assess without converting: writes a full HTML report "
+                        "showing green/red compliance per criterion for every file")
     p.add_argument("-f", "--force", action="store_true",
                    help="re-process files that already appear normalised")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
