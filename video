@@ -1294,6 +1294,13 @@ def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None
     saved_pct   = (saved / size_before * 100) if size_before else 0
     saved_sign  = "+" if saved < 0 else ""   # negative saved = grew
 
+    br_before_vals = [r["before"]["bitrate"] for r in conv if r["before"]["bitrate"]]
+    br_after_vals  = [r["after"]["bitrate"]  for r in conv if r["after"] and r["after"]["bitrate"]]
+    avg_br_before  = (sum(br_before_vals) // len(br_before_vals)) if br_before_vals else 0
+    avg_br_after   = (sum(br_after_vals)  // len(br_after_vals))  if br_after_vals  else 0
+    avg_br_saved   = avg_br_before - avg_br_after
+    avg_br_pct     = (avg_br_saved / avg_br_before * 100) if avg_br_before else 0
+
     def _cell(e):
         if not e:
             return "—"
@@ -1319,6 +1326,22 @@ def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None
         sign = "" if d < 0 else "+"
         return f'<span class="{cls}">{sign}{_fmt_size(d)}<br>{sign}{pct:.1f}%</span>'
 
+    def _bitrate_delta(r):
+        bb = r["before"]["bitrate"]
+        ba = r["after"]["bitrate"] if r["after"] else 0
+        if not bb or not ba:
+            return "—"
+        bb_s = f'{bb // 1000} kb/s'
+        ba_s = f'{ba // 1000} kb/s'
+        d    = ba - bb
+        pct  = (d / bb * 100) if bb else 0
+        cls  = "pos" if d < 0 else "neg"
+        sign = "" if d < 0 else "+"
+        return (
+            f'{bb_s} → {ba_s}<br>'
+            f'<span class="{cls}">{sign}{pct:.1f}%</span>'
+        )
+
     def _elapsed_cell(r):
         e = r.get("elapsed")
         if e is None:
@@ -1335,6 +1358,7 @@ def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None
         f'<td class="detail">{_cell(r["before"])}</td>'
         f'<td class="detail">{_cell(r["after"])}</td>'
         f'<td class="r delta">{_delta(r)}</td>'
+        f'<td class="r bitrate-delta">{_bitrate_delta(r)}</td>'
         f'<td class="r elapsed">{_elapsed_cell(r)}</td>'
         f'<td class="reasons">{", ".join(r["reasons"])}</td>'
         f'</tr>'
@@ -1387,7 +1411,7 @@ def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None
   td.path{{font-family:"SF Mono","Fira Code",monospace;font-size:12px;
            max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
   td.detail{{font-size:12px;min-width:220px}}
-  td.delta,td.elapsed{{font-size:12px;white-space:nowrap}}
+  td.delta,td.elapsed,td.bitrate-delta{{font-size:12px;white-space:nowrap}}
   td.reasons{{font-size:11px;color:#6e6e73}}
   .cfg-table{{width:auto;min-width:400px}}
   .cfg-table td:first-child{{font-weight:600;white-space:nowrap;padding-right:24px}}
@@ -1419,12 +1443,19 @@ def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None
   <div class="stat"><span class="val">{len(conv)}</span><span class="lbl">Converted</span></div>
   <div class="stat"><span class="val">{len(skipped)}</span><span class="lbl">Skipped</span></div>
   {"" if not errors else f'<div class="stat warn"><span class="val">{len(errors)}</span><span class="lbl">Errors</span></div>'}
-  <div class="stat"><span class="val">{_fmt_size(size_before)}</span><span class="lbl">Before</span></div>
-  <div class="stat"><span class="val">{_fmt_size(size_after)}</span><span class="lbl">After</span></div>
+  <div class="stat"><span class="val">{_fmt_size(size_before)}</span><span class="lbl">Size before</span></div>
+  <div class="stat"><span class="val">{_fmt_size(size_after)}</span><span class="lbl">Size after</span></div>
   <div class="stat {'save' if saved>=0 else 'grow'}">
     <span class="val">{saved_sign}{_fmt_size(abs(saved))}</span>
     <span class="lbl">{'Saved' if saved>=0 else 'Grew'} ({saved_sign}{saved_pct:.1f}%)</span>
   </div>
+  {"" if not avg_br_before else f'''
+  <div class="stat"><span class="val">{avg_br_before // 1000} kb/s</span><span class="lbl">Avg bitrate before</span></div>
+  <div class="stat"><span class="val">{avg_br_after // 1000} kb/s</span><span class="lbl">Avg bitrate after</span></div>
+  <div class="stat {'save' if avg_br_saved>=0 else 'grow'}">
+    <span class="val">{('' if avg_br_saved>=0 else '+')}{avg_br_saved // 1000} kb/s</span>
+    <span class="lbl">{'Reduced' if avg_br_saved>=0 else 'Increased'} ({('' if avg_br_pct>=0 else '+')+f'{avg_br_pct:.1f}'}%)</span>
+  </div>'''}
 </div>
 <div class="wrap">
 {"" if not conv else f'''
@@ -1433,7 +1464,7 @@ def _normalise_html(directory, results, target, orig_dir, dry_run, run_info=None
   <table>
     <thead><tr>
       <th>File</th><th>Before</th><th>After</th>
-      <th class="r">Size Δ</th><th class="r">Time</th><th>Changes</th>
+      <th class="r">Size Δ</th><th class="r">Bitrate</th><th class="r">Time</th><th>Changes</th>
     </tr></thead>
     <tbody>{conv_rows}</tbody>
   </table>
