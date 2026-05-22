@@ -20,12 +20,13 @@ Subcommands:
                                (codec, profile, resolution, aspect ratio, fps,
                                colour space, bit depth, bitrate, channels,
                                tags, and more; --json for raw ffprobe output)
-  normalise  [-n] [-f] DIR
+  normalise  [-n] [-l N] [-f] DIR
                                batch-normalise a directory tree to a web-friendly
                                format (H.264/AAC MP4 at 720p); deinterlaces CRT
                                footage and upscales low-res content via lanczos;
                                -n dry-run: writes a full HTML assessment report
-                               (green/red per criterion) without converting
+                               (green/red per criterion) without converting;
+                               -l N stop after converting N files (re-run to continue)
   thumb      [-t TIME] [-H PX] [-o OUTPUT] FILE
                                extract a single frame as a PNG image
 
@@ -1587,18 +1588,27 @@ def cmd_normalise(args):
             sys.exit(1)
         return
 
+    limit = args.limit
     print(f"Normalizing : {os.path.abspath(directory)}")
     print(f"Target      : {target_str}")
     print(f"Originals   → {orig_dir}")
     print(f"Tools       : {ffmpeg_ver}  |  {ffprobe_ver}")
+    if limit:
+        print(f"Limit       : {limit} conversion(s)")
     print()
 
     results = []
     run_start = time.monotonic()
+    n_converted = 0
+    limit_reached = False
 
     for root, dirs, files in os.walk(directory):
+        if limit_reached:
+            break
         dirs.sort()
         for fname in sorted(files):
+            if limit_reached:
+                break
             if os.path.splitext(fname)[1].lower() not in VIDEO_EXTENSIONS:
                 continue
 
@@ -1666,6 +1676,10 @@ def cmd_normalise(args):
                 results.append({"path": rel_path, "status": "converted",
                                  "before": before, "after": after,
                                  "reasons": reasons, "elapsed": elapsed})
+                n_converted += 1
+                if limit and n_converted >= limit:
+                    limit_reached = True
+                    break
 
             except Exception as exc:
                 msg = str(exc)
@@ -1683,6 +1697,8 @@ def cmd_normalise(args):
     errors  = sum(1 for r in results if r["status"] == "error")
 
     print()
+    if limit_reached:
+        print(f"Limit reached ({limit}). Re-run to continue processing remaining files.")
     print(f"Done: {conv} converted, {skipped} skipped, {errors} errors  ({_fmt_elapsed(total_elapsed)})")
 
     run_info["total_elapsed"] = _fmt_elapsed(total_elapsed)
@@ -1782,6 +1798,9 @@ def build_parser():
     p.add_argument("-n", "--dry-run", action="store_true",
                    help="scan and assess without converting: writes a full HTML report "
                         "showing green/red compliance per criterion for every file")
+    p.add_argument("-l", "--limit", type=int, default=None, metavar="N",
+                   help="stop after converting N files; re-run to continue "
+                        "(skipped/already-ok files do not count toward the limit)")
     p.add_argument("-f", "--force", action="store_true",
                    help="re-process files that already appear normalised")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
