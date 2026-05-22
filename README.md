@@ -36,7 +36,103 @@ All video operations are unified under the `video` command (Python3, backed by f
 Run `video <subcommand> -h` for per-subcommand help.
 
 Dependencies: `ffmpeg` and `ffprobe` must be on PATH. Run `bcinit` to install.
-  
+
+## Configuration
+
+bash_common uses `.bcconfig` files — INI-format files that can live in any
+directory, working like `.gitignore`: settings in a directory apply to that
+directory and all its children, with closer-to-`pwd` files overriding parent
+ones. The global defaults live at `~/.bcconfig`, created by `bcinit`.
+
+### File format
+
+`.bcconfig` is a standard INI file. Sections are named by command, with
+sub-sections for subcommands separated by a dot:
+
+```ini
+[bash_common]
+editor = mate
+
+[video]
+default_format = mp4
+
+[video.convert]
+video_codec  = libx264
+video_preset = medium
+video_crf    = 23
+audio_codec  = aac
+audio_bitrate = 128k
+
+[video.thumb]
+time = 00:00:05
+
+[video.normalise]
+target_width  = 1280
+target_height = 720
+original_dir  = /tmp/video-originals
+deinterlace   = auto
+```
+
+### Directory override example
+
+To use different encoding settings for a specific project, place a `.bcconfig`
+file in the project directory:
+
+```ini
+# ~/projects/myfilm/.bcconfig
+[video.convert]
+video_crf    = 18
+video_preset = slow
+
+[video.normalise]
+original_dir = ./originals
+```
+
+Only the keys you specify are overridden; everything else falls back to the
+parent or global config.
+
+### The `bcconfig` command
+
+`bcconfig` shows the effective merged settings for your current location,
+with each setting annotated by which file it came from:
+
+```
+$ bcconfig video
+
+Sources (base → leaf):
+  ~/.bcconfig
+  ~/projects/myfilm/.bcconfig
+
+[video.convert]
+video_codec   = libx264    ~/.bcconfig
+video_preset  = slow       ~/projects/myfilm/.bcconfig  ← overridden
+video_crf     = 18         ~/projects/myfilm/.bcconfig  ← overridden
+audio_codec   = aac        ~/.bcconfig
+audio_bitrate = 128k       ~/.bcconfig
+```
+
+**Usage:**
+
+```
+bcconfig                           show all effective settings
+bcconfig VIDEO                     filter to [VIDEO] and [VIDEO.*] sections
+bcconfig --files                   list source files in load order
+bcconfig --get video.convert.crf   print a single value
+bcconfig --get video.convert.crf --fallback 23
+```
+
+### Shell helper
+
+The `bc_cfg_get` bash function (available in every interactive shell) reads a
+single config value — useful in scripts and custom functions:
+
+```bash
+editor=$(bc_cfg_get bash_common editor mate)
+vcodec=$(bc_cfg_get video.convert video_codec libx264)
+```
+
+Arguments: `bc_cfg_get <section> <key> [fallback]`
+
 ## Installing
 
 Clone to `~/.bash_common` (the dot prefix keeps it hidden, consistent with other dot-files

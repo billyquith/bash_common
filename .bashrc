@@ -48,6 +48,7 @@ source $BC_INSTALL_DIR/commands/colour.sh
 source $BC_INSTALL_DIR/commands/appwrap.sh
 source $BC_INSTALL_DIR/commands/bookmark.sh
 source $BC_INSTALL_DIR/commands/helpers.sh
+source $BC_INSTALL_DIR/commands/config.sh
 
 # Loads the system's Bash completion modules.
 if [[ -r /etc/bash_completion ]]; then

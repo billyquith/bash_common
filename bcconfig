@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""
+bcconfig - Show effective .bcconfig settings for the current directory.
+
+.bcconfig files are INI-format files that can live in any directory from ~
+down to your current directory (like .gitignore). Settings in closer-to-pwd
+files override those in parent directories. Each setting shows which file it
+came from; values overridden by a child file are annotated.
+
+Usage:
+    bcconfig                              show all effective settings
+    bcconfig COMMAND                      filter to [COMMAND] and [COMMAND.*] sections
+    bcconfig --files                      list source files in load order
+    bcconfig --get SECTION.KEY            print a single effective value
+    bcconfig --get SECTION.KEY --fallback VALUE   print value or fallback
+"""
+
+import argparse
+import configparser
+import os
+import sys
+
+_CONFIG_NAME = ".bcconfig"
+
+
+def _find_bcconfig_files(cwd=None):
+    """Return list of .bcconfig file paths from ~ down to cwd (root first)."""
+    home = os.path.expanduser("~")
+    cwd = os.path.abspath(cwd or os.getcwd())
+
+    paths = []
+
+    # Home-level config lives at ~/.bcconfig
+    home_cfg = os.path.join(home, _CONFIG_NAME)
+    if os.path.isfile(home_cfg):
+        paths.append(home_cfg)
+
+    # Subdirectory configs between home and cwd
+    try:
+        rel = os.path.relpath(cwd, home)
+    except ValueError:
+        return paths  # different drive on Windows
+
+    if rel.startswith(".."):
+        return paths  # cwd is outside home; only use home config
+
+    parts = [p for p in rel.split(os.sep) if p and p != "."]
+    current = home
+    for part in parts:
+        current = os.path.join(current, part)
+        candidate = os.path.join(current, _CONFIG_NAME)
+        if os.path.isfile(candidate):
+            paths.append(candidate)
+
+    return paths
+
+
+def _load_with_provenance(files):
+    """Load and merge .bcconfig files, tracking per-key provenance.
+
+    Returns:
+        merged:    RawConfigParser with all keys merged (later files win)
+        prov:      dict mapping (section, key) -> filepath of last writer
+        overridden: set of (section, key) pairs overridden by a later file
+    """
+    prov = {}           # (section, key) -> filepath
+    overridden = set()  # (section, key) pairs that were overridden
+
+    merged = configparser.RawConfigParser()
+
+    for filepath in files:
+        single = configparser.RawConfigParser()
+        single.read(filepath, encoding="utf-8")
+        for section in single.sections():
+            if not merged.has_section(section):
+                merged.add_section(section)
+            for key, value in single.items(section):
+                if (section, key) in prov:
+                    overridden.add((section, key))
+                merged.set(section, key, value)
+                prov[(section, key)] = filepath
+
+    return merged, prov, overridden
+
+
+def _abbrev(path):
+    """Replace home directory prefix with ~."""
+    home = os.path.expanduser("~")
+    if path == home or path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
+def _show(args):
+    files = _find_bcconfig_files()
+    if not files:
+        print("No .bcconfig files found between ~ and cwd.")
+        return
+
+    merged, prov, overridden = _load_with_provenance(files)
+
+    print("Sources (base → leaf):")
+    for f in files:
+        print(f"  {_abbrev(f)}")
+
+    cmd = args.command.lower() if args.command else None
+    sections = [
+        s for s in merged.sections()
+        if not cmd or s.lower() == cmd or s.lower().startswith(cmd + ".")
+    ]
+
+    if not sections:
+        msg = f"No sections matching '{cmd}'." if cmd else "Config is empty."
+        print(f"\n{msg}")
+        return
+
+    # Column widths for alignment
+    all_keys = [k for s in sections for k in merged.options(s)]
+    all_vals = [merged.get(s, k) for s in sections for k in merged.options(s)]
+    max_key = max((len(k) for k in all_keys), default=0)
+    max_val = max((len(v) for v in all_vals), default=0)
+
+    for section in sections:
+        print(f"\n[{section}]")
+        for key in merged.options(section):
+            value = merged.get(section, key)
+            source = _abbrev(prov.get((section, key), "?"))
+            annot = "  ← overridden" if (section, key) in overridden else ""
+            print(f"  {key:<{max_key}} = {value:<{max_val}}  {source}{annot}")
+
+
+def _files(args):
+    for f in _find_bcconfig_files():
+        print(_abbrev(f))
+
+
+def _get(args):
+    # Split on last dot: everything before = section, last component = key
+    dot = args.key.rfind(".")
+    if dot < 1:
+        sys.exit(
+            f"Error: --get expects SECTION.KEY (e.g. video.convert.crf), "
+            f"got: {args.key!r}"
+        )
+    section, key = args.key[:dot], args.key[dot + 1:]
+
+    files = _find_bcconfig_files()
+    merged, _, _ = _load_with_provenance(files)
+
+    try:
+        print(merged.get(section, key))
+    except (configparser.NoSectionError, configparser.NoOptionError):
+        if args.fallback is not None:
+            print(args.fallback)
+        else:
+            sys.exit(
+                f"Error: {section}.{key} not found "
+                f"(use --fallback to supply a default)"
+            )
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="bcconfig",
+        description="Show effective .bcconfig settings for the current directory.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+examples:
+  bcconfig                           show all effective settings
+  bcconfig video                     show [video] and [video.*] sections only
+  bcconfig --files                   list source .bcconfig files in load order
+  bcconfig --get video.convert.crf   print a single effective value
+  bcconfig --get video.convert.crf --fallback 23
+""",
+    )
+    p.add_argument(
+        "command", nargs="?", metavar="COMMAND",
+        help="filter output to [COMMAND] and [COMMAND.*] sections",
+    )
+    p.add_argument(
+        "--files", action="store_true",
+        help="list source .bcconfig files in load order",
+    )
+    p.add_argument(
+        "--get", metavar="SECTION.KEY",
+        help="print the effective value of SECTION.KEY",
+    )
+    p.add_argument(
+        "--fallback", metavar="VALUE",
+        help="value to use when --get key is not found",
+    )
+
+    args = p.parse_args()
+
+    if args.files:
+        _files(args)
+    elif args.get:
+        args.key = args.get
+        _get(args)
+    else:
+        _show(args)
+
+
+if __name__ == "__main__":
+    main()

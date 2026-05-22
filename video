@@ -45,31 +45,56 @@ import time
 LOG = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
 
-BCCFG = os.path.expanduser("~/.bccfg")
+_BCCONFIG_NAME = ".bcconfig"
 
 
 # ---------------------------------------------------------------------------
 # User config
 # ---------------------------------------------------------------------------
 
-def _load_config(local_dir=None):
-    """Load video.ini configuration via configparser.
+def _find_bcconfig_files(cwd=None):
+    """Return list of .bcconfig file paths from ~ down to cwd (root first)."""
+    home = os.path.expanduser("~")
+    cwd = os.path.abspath(cwd or os.getcwd())
 
-    Reads the global ~/.bccfg/video.ini first, then merges a local
-    video.ini from *local_dir* on top if one exists. Local values win.
-    Returns a ConfigParser instance; missing keys fall back gracefully.
+    paths = []
+    home_cfg = os.path.join(home, _BCCONFIG_NAME)
+    if os.path.isfile(home_cfg):
+        paths.append(home_cfg)
+
+    try:
+        rel = os.path.relpath(cwd, home)
+    except ValueError:
+        return paths  # different drive on Windows
+
+    if rel.startswith(".."):
+        return paths  # cwd is outside home; only home config applies
+
+    parts = [p for p in rel.split(os.sep) if p and p != "."]
+    current = home
+    for part in parts:
+        current = os.path.join(current, part)
+        candidate = os.path.join(current, _BCCONFIG_NAME)
+        if os.path.isfile(candidate):
+            paths.append(candidate)
+
+    return paths
+
+
+def _load_config(local_dir=None):
+    """Load .bcconfig configuration via configparser.
+
+    Reads .bcconfig files from ~ down to local_dir (or cwd), merging them
+    so that closer-to-pwd values override parent values.
+    Returns a RawConfigParser instance; missing keys fall back gracefully.
     """
-    cfg = configparser.ConfigParser()
-    paths = [os.path.join(BCCFG, "video.ini")]
-    if local_dir:
-        local = os.path.join(os.path.abspath(local_dir), "video.ini")
-        if os.path.isfile(local):
-            paths.append(local)
-    cfg.read(paths, encoding="utf-8")
+    cfg = configparser.RawConfigParser()
+    files = _find_bcconfig_files(local_dir or os.getcwd())
+    cfg.read(files, encoding="utf-8")
     return cfg
 
 
-# Global config loaded once at import time (no local override).
+# Global config loaded once at import time.
 # Subcommands that accept a directory load their own merged config at runtime.
 _VIDEO_CFG = _load_config()
 
@@ -286,11 +311,11 @@ def cmd_convert(args):
 
     # All settings: explicit args win, then config, then hardcoded fallbacks
     fmt     = args.format.lower()
-    vcodec  = args.vcodec  or _vcfg("convert", "video_codec",   "libx264")
-    acodec  = args.acodec  or _vcfg("convert", "audio_codec",   "aac")
-    crf     = str(args.crf    if args.crf    is not None else _vcfg("convert", "video_crf",    "23"))
-    preset  = args.preset  or _vcfg("convert", "video_preset",  "medium")
-    abitrate= args.abitrate or _vcfg("convert", "audio_bitrate", "128k")
+    vcodec  = args.vcodec  or _vcfg("video.convert", "video_codec",   "libx264")
+    acodec  = args.acodec  or _vcfg("video.convert", "audio_codec",   "aac")
+    crf     = str(args.crf    if args.crf    is not None else _vcfg("video.convert", "video_crf",    "23"))
+    preset  = args.preset  or _vcfg("video.convert", "video_preset",  "medium")
+    abitrate= args.abitrate or _vcfg("video.convert", "audio_bitrate", "128k")
 
     SUPPORTED = {"mp4", "mkv", "mov", "webm"}
     if fmt not in SUPPORTED:
@@ -492,13 +517,13 @@ def cmd_formats(args):
     field("ffprobe", _tool_version("ffprobe"))
 
     # ---- Current config ----
-    section("Current config  (~/.bccfg/video.ini)")
-    field("Default format",  _vcfg("convert", "default_format",  "mp4"))
-    field("Video codec",     _vcfg("convert", "video_codec",     "libx264"))
-    field("Audio codec",     _vcfg("convert", "audio_codec",     "aac"))
-    field("CRF",             _vcfg("convert", "video_crf",       "23"))
-    field("Preset",          _vcfg("convert", "video_preset",    "medium"))
-    field("Audio bitrate",   _vcfg("convert", "audio_bitrate",   "128k"))
+    section("Current config  (~/.bcconfig)")
+    field("Default format",  _vcfg("video",         "default_format",  "mp4"))
+    field("Video codec",     _vcfg("video.convert", "video_codec",     "libx264"))
+    field("Audio codec",     _vcfg("video.convert", "audio_codec",     "aac"))
+    field("CRF",             _vcfg("video.convert", "video_crf",       "23"))
+    field("Preset",          _vcfg("video.convert", "video_preset",    "medium"))
+    field("Audio bitrate",   _vcfg("video.convert", "audio_bitrate",   "128k"))
 
     # ---- Container formats ----
     section("Container formats")
@@ -591,7 +616,7 @@ def cmd_clamp(args):
 def cmd_thumb(args):
     _require("ffmpeg")
     output = args.output or _default_output(args.file, "_thumb.png")
-    timestamp = args.time or _vcfg("thumb", "time", "00:00:01")
+    timestamp = args.time or _vcfg("video.thumb", "time", "00:00:01")
     cmd = ["ffmpeg", "-i", args.file, "-ss", timestamp, "-vframes", "1"]
     if args.height:
         # -2 keeps width even and maintains aspect ratio
@@ -1135,16 +1160,16 @@ def cmd_normalise(args):
     def gcfg(section, key, fallback):
         return _vcfg(section, key, fallback, cfg=cfg)
 
-    target_w    = int(gcfg("normalise", "target_width",   "1280"))
-    target_h    = int(gcfg("normalise", "target_height",  "720"))
-    target_fmt  = gcfg("normalise", "format",         "mp4")
-    vcodec      = gcfg("normalise", "video_codec",    "libx264")
-    acodec      = gcfg("normalise", "audio_codec",    "aac")
-    preset      = gcfg("normalise", "video_preset",   "medium")
-    crf         = gcfg("normalise", "video_crf",      "23")
-    abitrate    = gcfg("normalise", "audio_bitrate",  "128k")
-    deinterlace = gcfg("normalise", "deinterlace",    "auto").lower()
-    orig_dir    = os.path.expanduser(gcfg("normalise", "original_dir", "/tmp/video-originals"))
+    target_w    = int(gcfg("video.normalise", "target_width",   "1280"))
+    target_h    = int(gcfg("video.normalise", "target_height",  "720"))
+    target_fmt  = gcfg("video.normalise", "format",         "mp4")
+    vcodec      = gcfg("video.normalise", "video_codec",    "libx264")
+    acodec      = gcfg("video.normalise", "audio_codec",    "aac")
+    preset      = gcfg("video.normalise", "video_preset",   "medium")
+    crf         = gcfg("video.normalise", "video_crf",      "23")
+    abitrate    = gcfg("video.normalise", "audio_bitrate",  "128k")
+    deinterlace = gcfg("video.normalise", "deinterlace",    "auto").lower()
+    orig_dir    = os.path.expanduser(gcfg("video.normalise", "original_dir", "/tmp/video-originals"))
     report_path = args.output or os.path.join(directory, "normalise-report.html")
 
     want_vc = _VCODEC_PROBE.get(vcodec, vcodec)
@@ -1155,10 +1180,7 @@ def cmd_normalise(args):
     ffmpeg_ver  = _tool_version("ffmpeg")
     ffprobe_ver = _tool_version("ffprobe")
     python_ver  = f"Python {sys.version.split()[0]}"
-    cfg_paths   = [os.path.join(BCCFG, "video.ini")]
-    local_ini   = os.path.join(os.path.abspath(directory), "video.ini")
-    if os.path.isfile(local_ini):
-        cfg_paths.append(local_ini)
+    cfg_paths   = _find_bcconfig_files(directory)
 
     print(f"Normalizing : {os.path.abspath(directory)}")
     print(f"Target      : {target_str}")
@@ -1321,7 +1343,7 @@ def build_parser():
                    help="dump raw ffprobe JSON instead of formatted output")
 
     # convert
-    default_fmt = _vcfg("convert", "default_format", "mp4")
+    default_fmt = _vcfg("video", "default_format", "mp4")
     p = sub.add_parser("convert",
                        help="transcode a file using config defaults (all overridable via args)")
     p.add_argument("file", metavar="FILE")
@@ -1330,15 +1352,15 @@ def build_parser():
     p.add_argument("-H", "--height", default=None, metavar="PX", type=int,
                    help="scale to this height in pixels, maintaining aspect ratio")
     p.add_argument("--vcodec", default=None, metavar="CODEC",
-                   help=f"video codec (config: {_vcfg('convert','video_codec','libx264')})")
+                   help=f"video codec (config: {_vcfg('video.convert','video_codec','libx264')})")
     p.add_argument("--acodec", default=None, metavar="CODEC",
-                   help=f"audio codec (config: {_vcfg('convert','audio_codec','aac')})")
+                   help=f"audio codec (config: {_vcfg('video.convert','audio_codec','aac')})")
     p.add_argument("--crf", default=None, metavar="N", type=int,
-                   help=f"CRF quality, lower=better (config: {_vcfg('convert','video_crf','23')})")
+                   help=f"CRF quality, lower=better (config: {_vcfg('video.convert','video_crf','23')})")
     p.add_argument("--preset", default=None, metavar="PRESET",
-                   help=f"encoding preset (config: {_vcfg('convert','video_preset','medium')})")
+                   help=f"encoding preset (config: {_vcfg('video.convert','video_preset','medium')})")
     p.add_argument("--abitrate", default=None, metavar="RATE",
-                   help=f"audio bitrate (config: {_vcfg('convert','audio_bitrate','128k')})")
+                   help=f"audio bitrate (config: {_vcfg('video.convert','audio_bitrate','128k')})")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
 
     # concat

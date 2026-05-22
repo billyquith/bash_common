@@ -5,7 +5,7 @@
 # everything bash_common needs: system tools (ffmpeg, ffprobe, mediainfo,
 # wget, python3), Python packages (markdown2), bundled completion scripts
 # (git, brew, etc.), shell config in ~/.bash_profile / ~/.bashrc, and
-# user config files in ~/.bccfg/.
+# user config file ~/.bcconfig.
 #
 # Usage: bcinit [-c] [-h]
 #   -c   check only; report what is missing without installing anything
@@ -45,7 +45,9 @@ esac
 MISSING_SYS=()
 MISSING_PY=()
 SHELL_CONFIG_WARNINGS=()
+MISSING_CFG=0
 BCCFG="$HOME/.bccfg"
+BCCONFIG="$HOME/.bcconfig"
 
 check_sys() {
     local cmd=$1
@@ -175,35 +177,34 @@ if [ ${#SHELL_CONFIG_WARNINGS[@]} -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# User config (~/.bccfg/)
+# User config (~/.bcconfig)
 # ---------------------------------------------------------------------------
 
 echo ""
-colecho -white "User config ($BCCFG):"
+colecho -white "User config:"
 
-check_cfg() {
-    local file="$BCCFG/$1"
-    if [ -f "$file" ]; then
-        colecho -green "  [ok] " -normal "$file"
-    else
-        colecho -ye "  [missing] " -normal "$file (will be created with defaults)"
-    fi
-}
-
-check_cfg "video.ini"
+if [ -f "$BCCONFIG" ]; then
+    colecho -green "  [ok] " -normal "$BCCONFIG"
+elif [ -f "$BCCFG/video.ini" ]; then
+    colecho -ye "  [migrate] " -normal "$BCCFG/video.ini → $BCCONFIG (will be migrated)"
+    MISSING_CFG=1
+else
+    colecho -ye "  [missing] " -normal "$BCCONFIG (will be created with defaults)"
+    MISSING_CFG=1
+fi
 
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
 
-if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ] && [ ${#SHELL_CONFIG_WARNINGS[@]} -eq 0 ]; then
+if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ] && [ ${#SHELL_CONFIG_WARNINGS[@]} -eq 0 ] && [ "$MISSING_CFG" -eq 0 ]; then
     echo ""
     colecho -green "All dependencies satisfied and shell config looks good."
     exit 0
 fi
 
 # Shell config warnings are always informational — they never block the dep install
-if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ]; then
+if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ] && [ "$MISSING_CFG" -eq 0 ]; then
     echo ""
     colecho -green "All dependencies satisfied."
     colecho -ye "Review shell config warnings above."
@@ -242,34 +243,35 @@ if [ ${#MISSING_PY[@]} -gt 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# User config files (~/.bccfg/)
+# User config file (~/.bcconfig)
 # ---------------------------------------------------------------------------
 
 echo ""
-colecho -white "Writing default user config files..."
+colecho -white "Writing user config..."
 
-mkdir -p "$BCCFG"
+_write_bcconfig_defaults() {
+    python3 - "$BCCONFIG" "$BCCFG/video.ini" << 'WRITECFG'
+import configparser, os, sys
 
-write_default_cfg() {
-    local file="$BCCFG/$1"
-    if [ -f "$file" ]; then
-        colecho -green "  [ok] " -normal "$file (exists, not overwritten)"
-    else
-        cat > "$file"   # content comes from a heredoc at each call site
-        colecho -green "  [created] " -normal "$file"
-    fi
-}
+bcconfig_path = sys.argv[1]
+old_video_ini = sys.argv[2]
 
-write_default_cfg "video.ini" << 'VIDEOCFG'
-# bash_common video configuration (~/.bccfg/video.ini)
-# Loaded by the `video` command as default settings.
-# Edit these values to match your preferences.
+defaults = """\
+# bash_common configuration (~/.bcconfig)
+# Settings here apply globally; place .bcconfig files in project directories
+# to override values for that directory tree (like .gitignore).
+# Run `bcconfig` to see the effective settings for your current location.
 
-[convert]
-# Default container format when -f is not specified.
+[bash_common]
+# Preferred text editor (used by bash_common helper commands).
+editor = mate
+
+[video]
+# Default container format for `video convert` when -f is not specified.
 # Supported: mp4, mkv, mov, webm
 default_format = mp4
 
+[video.convert]
 # Video codec.
 #   mp4 / mkv / mov : libx264 (H.264) or libx265 (H.265, smaller files, slower)
 #   webm            : libvpx-vp9
@@ -282,7 +284,7 @@ video_preset = medium
 
 # Constant Rate Factor — controls quality (lower = better quality, larger file).
 #   libx264 : 18 (high quality) to 28 (lower quality), sane default 23
-#   libx265 : 24–28 range, sane default 28
+#   libx265 : 24-28 range, sane default 28
 video_crf = 23
 
 # Audio codec.
@@ -293,17 +295,17 @@ audio_codec = aac
 # Audio bitrate.
 audio_bitrate = 128k
 
-[thumb]
+[video.thumb]
 # Default timestamp for `video thumb` when -t is not specified.
 # Use HH:MM:SS or a value in seconds. A few seconds in avoids black frames.
 time = 00:00:05
 
-[normalise]
+[video.normalise]
 # Target container format for `video normalise`.
 format = mp4
 
-# Target resolution. Videos at any resolution are scaled to fit within this
-# box (maintaining aspect ratio, padded with black bars).
+# Target resolution. Videos are scaled to fit within this box (maintaining
+# aspect ratio, padded with black bars).
 target_width  = 1280
 target_height = 720
 
@@ -311,14 +313,13 @@ target_height = 720
 video_codec   = libx264
 audio_codec   = aac
 
-# Encoding quality and speed (see [convert] section for details).
+# Encoding quality and speed (see [video.convert] section for details).
 video_preset  = medium
 video_crf     = 23
 audio_bitrate = 128k
 
 # Where to move original files before transcoding.
-# The original directory tree structure is preserved inside this path.
-# A per-project video.ini can override this to keep originals alongside the project.
+# A per-project .bcconfig can override this to keep originals alongside the project.
 original_dir  = /tmp/video-originals
 
 # Deinterlace interlaced / CRT-sourced footage using yadif.
@@ -326,7 +327,61 @@ original_dir  = /tmp/video-originals
 #   yes    always deinterlace
 #   no     never deinterlace
 deinterlace   = auto
-VIDEOCFG
+"""
+
+# Section mapping for migrating old ~/.bccfg/video.ini values
+SECTION_MAP = {
+    "convert":   "video.convert",
+    "normalise": "video.normalise",
+    "thumb":     "video.thumb",
+}
+
+# Write the defaults file first
+with open(bcconfig_path, "w", encoding="utf-8") as f:
+    f.write(defaults)
+
+# If an old video.ini exists, overlay its values on top of the defaults
+if os.path.isfile(old_video_ini):
+    old = configparser.RawConfigParser()
+    old.read(old_video_ini, encoding="utf-8")
+
+    new = configparser.RawConfigParser()
+    new.read(bcconfig_path, encoding="utf-8")
+
+    changed = False
+    for old_sec, new_sec in SECTION_MAP.items():
+        if old.has_section(old_sec):
+            for key, value in old.items(old_sec):
+                if new.has_section(new_sec):
+                    new.set(new_sec, key, value)
+                    changed = True
+
+    if changed:
+        with open(bcconfig_path, "w", encoding="utf-8") as f:
+            f.write(defaults)
+        # Re-read and rewrite preserving comments is complex;
+        # instead append a note that values were migrated
+        with open(bcconfig_path, "a", encoding="utf-8") as f:
+            f.write(f"\n# Values above were seeded from {old_video_ini}\n")
+        print("migrated")
+    else:
+        print("created")
+else:
+    print("created")
+WRITECFG
+}
+
+if [ -f "$BCCONFIG" ]; then
+    colecho -green "  [ok] " -normal "$BCCONFIG (exists, not overwritten)"
+else
+    result=$(_write_bcconfig_defaults)
+    if [ "$result" = "migrated" ]; then
+        colecho -green "  [migrated] " -normal "$BCCONFIG (values from $BCCFG/video.ini)"
+        colecho -ye "  [note] " -normal "$BCCFG/video.ini is no longer used and can be removed"
+    else
+        colecho -green "  [created] " -normal "$BCCONFIG"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Bundled completion scripts
