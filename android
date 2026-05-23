@@ -1,113 +1,601 @@
 #!/usr/bin/env python3
-"""android - Android/ADB helpers for Unity projects."""
-# Supports --bc-metadata discovery.
+"""
+android - Android/ADB helpers for Unity and game development.
 
+Subcommands:
+  install     [APK]                install an APK onto the connected device
+  uninstall   [PACKAGE]            uninstall an installed package
+  run         [PACKAGE]            launch the package's main activity
+  log         [-o OUTPUT] [-F FILTER] [-f]
+                                   capture logcat output to a file (-f to tail it)
+  list        [--all]              list installed packages (3rd-party by default)
+  dump        [PACKAGE]            dump package info from the device
+  activity    [PACKAGE]            show the launcher activity for a package
+  devices                          list connected devices and emulators
+  adb         ARGS...              run arbitrary adb commands (passthrough)
+  config      [--json]             show effective android configuration
+
+Configuration: reads .bcconfig [android] section. As a fallback, legacy .uadb
+files (KEY=value pairs) in ~ and the current directory are still honoured.
+
+Run `android <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import json
+import logging
+import os
+import shlex
+import shutil
+import subprocess
 import sys
+from pathlib import Path
 
-from lib.bc_group import passthrough_arg, run_group
+from lib.bc_config import load as load_bcconfig
+
+LOG = logging.getLogger(__name__)
+logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
 
 
-SUMMARY = "Android and ADB helpers"
+# ---------------------------------------------------------------------------
+# Config schema
+# Consumed by `bcconfig --init` (via --bc-metadata) and used as defaults.
+# ---------------------------------------------------------------------------
 
-ROUTES = {
-    "install": {
-        "target": "uadb",
-        "prefix": ["-i"],
-        "metadata": {
-            "name": "install",
-            "summary": "Install the configured APK",
-            "safety": "write",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "run": {
-        "target": "uadb",
-        "prefix": ["-r"],
-        "metadata": {
-            "name": "run",
-            "summary": "Run the configured Android package",
-            "safety": "write",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "uninstall": {
-        "target": "uadb",
-        "prefix": ["-u"],
-        "metadata": {
-            "name": "uninstall",
-            "summary": "Uninstall the configured Android package",
-            "safety": "write",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "log": {
-        "target": "uadb",
-        "prefix": ["-l"],
-        "metadata": {
-            "name": "log",
-            "summary": "Capture logcat output",
-            "safety": "write",
-            "args": [passthrough_arg("args", "logcat options")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "list": {
-        "target": "uadb",
-        "prefix": ["--list"],
-        "metadata": {
-            "name": "list",
-            "summary": "List installed third-party packages",
-            "safety": "read",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "dump": {
-        "target": "uadb",
-        "prefix": ["--dump"],
-        "metadata": {
-            "name": "dump",
-            "summary": "Dump configured package information",
-            "safety": "read",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "activity": {
-        "target": "uadb",
-        "prefix": ["--act"],
-        "metadata": {
-            "name": "activity",
-            "summary": "Show the launcher activity for the configured package",
-            "safety": "read",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "adb": {
-        "target": "uadb",
-        "prefix": ["--cmd"],
-        "metadata": {
-            "name": "adb",
-            "summary": "Pass commands directly to adb",
-            "safety": "write",
-            "args": [passthrough_arg("args", "ADB arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
+BCCONFIG_SCHEMA = {
+    "android": [
+        ("adb",        "",                              "Path to adb binary; empty = auto-detect via unity_path then PATH"),
+        ("unity_path", "",                              "Unity install root (used to locate Unity's bundled adb)"),
+        ("apk",        "",                              "Default APK file used by `install` when none is given"),
+        ("package",    "",                              "Default Android package name (e.g. com.example.app)"),
+        ("activity",   "android.intent.action.MAIN",    "Intent action used by `run`"),
+        ("log_file",   "adblog.txt",                    "Default logcat output file"),
+        ("logopts",    "",                              "Default logcat filter (e.g. 'Unity:V *:S')"),
+    ],
+}
+
+UNITY_ADB_REL = "Editor/Data/PlaybackEngines/AndroidPlayer/SDK/platform-tools/adb"
+
+
+def _schema_for_metadata():
+    sections = {}
+    for section, entries in BCCONFIG_SCHEMA.items():
+        sections[section] = [
+            {"key": key, "default": default, "description": desc}
+            for key, default, desc in entries
+        ]
+    return sections
+
+
+def bc_metadata():
+    """Return machine-readable metadata for bcui/bcconfig/completion discovery."""
+    return {
+        "schema_version": 1,
+        "name": "android",
+        "summary": "Android and ADB helpers for Unity / game development",
+        "command_style": "subcommands",
+        "config_sections": _schema_for_metadata(),
+        "subcommands": [
+            {
+                "name": "install",
+                "summary": "Install an APK onto the connected device",
+                "safety": "write",
+                "args": [
+                    {"name": "apk", "label": "APK file", "kind": "path",
+                     "required": False, "exists": True, "config": "android.apk"},
+                ],
+                "options": [
+                    {"name": "package", "flag": "--package", "kind": "string",
+                     "label": "Package (force-stop before install)", "config": "android.package"},
+                ],
+                "artifacts": [],
+            },
+            {
+                "name": "uninstall",
+                "summary": "Uninstall a package from the device",
+                "safety": "write",
+                "args": [
+                    {"name": "package", "label": "Package name", "kind": "string",
+                     "required": False, "config": "android.package"},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "run",
+                "summary": "Launch the package's main activity on the device",
+                "safety": "write",
+                "args": [
+                    {"name": "package", "label": "Package name", "kind": "string",
+                     "required": False, "config": "android.package"},
+                ],
+                "options": [
+                    {"name": "activity", "flag": "--activity", "kind": "string",
+                     "label": "Intent action", "config": "android.activity"},
+                    {"name": "component", "flag": "--component", "kind": "string",
+                     "label": "Explicit ComponentName (package/activity)"},
+                ],
+                "artifacts": [],
+            },
+            {
+                "name": "log",
+                "summary": "Capture logcat output to a file",
+                "safety": "write",
+                "args": [],
+                "options": [
+                    {"name": "output", "flag": "--output", "short_flag": "-o", "kind": "path",
+                     "label": "Log file path", "config": "android.log_file", "artifact": "text"},
+                    {"name": "filter", "flag": "--filter", "short_flag": "-F", "kind": "string",
+                     "label": "Logcat filter expression (e.g. 'Unity:V *:S')",
+                     "config": "android.logopts"},
+                    {"name": "follow", "flag": "--follow", "short_flag": "-f", "kind": "boolean",
+                     "label": "Stream logcat to terminal as well as file"},
+                    {"name": "append", "flag": "--append", "kind": "boolean",
+                     "label": "Append to log file instead of overwriting"},
+                ],
+                "artifacts": [
+                    {"kind": "log", "path_option": "output"},
+                ],
+            },
+            {
+                "name": "list",
+                "summary": "List packages installed on the device",
+                "safety": "read",
+                "args": [],
+                "options": [
+                    {"name": "all", "flag": "--all", "kind": "boolean",
+                     "label": "Include system packages (default: 3rd-party only)"},
+                ],
+                "artifacts": [],
+            },
+            {
+                "name": "dump",
+                "summary": "Dump package info from the device",
+                "safety": "read",
+                "args": [
+                    {"name": "package", "label": "Package name", "kind": "string",
+                     "required": False, "config": "android.package"},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "activity",
+                "summary": "Show the launcher activity for an installed package",
+                "safety": "read",
+                "args": [
+                    {"name": "package", "label": "Package name", "kind": "string",
+                     "required": False, "config": "android.package"},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "devices",
+                "summary": "List connected devices and emulators",
+                "safety": "read",
+                "args": [],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "adb",
+                "summary": "Pass arguments directly to the resolved adb binary",
+                "safety": "write",
+                "args": [
+                    {"name": "args", "label": "adb arguments", "kind": "path-list",
+                     "required": False},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "config",
+                "summary": "Show the effective android configuration",
+                "safety": "read",
+                "args": [],
+                "options": [
+                    {"name": "json", "flag": "--json", "kind": "boolean",
+                     "label": "Emit as JSON"},
+                ],
+                "artifacts": [
+                    {"kind": "json", "source": "stdout", "when_option": "json"},
+                ],
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Effective config: defaults <- legacy .uadb <- .bcconfig
+# ---------------------------------------------------------------------------
+
+_LEGACY_UADB_MAP = {
+    "ADB":        "adb",
+    "UNITY_PATH": "unity_path",
+    "APK":        "apk",
+    "PACKAGE":    "package",
+    "ACTIVITY":   "activity",
+    "LOGOPTS":    "logopts",
 }
 
 
+def _load_legacy_uadb():
+    """Parse legacy .uadb / ~/.uadb files as KEY=VALUE pairs (bash-style)."""
+    values = {}
+    for path in (Path.home() / ".uadb", Path.cwd() / ".uadb"):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" not in stripped:
+                continue
+            key, _, value = stripped.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key:
+                values[key] = value
+    return values
+
+
+def _effective_config():
+    """Compose effective config from BCCONFIG_SCHEMA defaults, legacy .uadb, and .bcconfig."""
+    cfg = {
+        key: default
+        for _section, entries in BCCONFIG_SCHEMA.items()
+        for key, default, _desc in entries
+    }
+    cfg["_sources"] = {}
+
+    for key in cfg:
+        if key != "_sources":
+            cfg["_sources"][key] = "default"
+
+    legacy = _load_legacy_uadb()
+    for legacy_key, our_key in _LEGACY_UADB_MAP.items():
+        if legacy.get(legacy_key):
+            cfg[our_key] = legacy[legacy_key]
+            cfg["_sources"][our_key] = ".uadb"
+
+    bcfg = load_bcconfig()
+    if bcfg.has_section("android"):
+        for key, value in bcfg.items("android"):
+            if value is None:
+                continue
+            cfg[key] = value
+            cfg["_sources"][key] = ".bcconfig"
+
+    return cfg
+
+
+# ---------------------------------------------------------------------------
+# ADB discovery
+# ---------------------------------------------------------------------------
+
+def _find_adb(cfg):
+    """Return (adb_path, source_description) or (None, None)."""
+    explicit = (cfg.get("adb") or "").strip()
+    if explicit:
+        expanded = os.path.expanduser(explicit)
+        if os.path.isfile(expanded) and os.access(expanded, os.X_OK):
+            return expanded, f"config: {expanded}"
+        LOG.warning("configured adb is missing or not executable: %s", explicit)
+
+    unity = (cfg.get("unity_path") or "").strip()
+    if unity:
+        candidate = os.path.join(os.path.expanduser(unity), UNITY_ADB_REL)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate, f"unity: {unity}"
+
+    on_path = shutil.which("adb")
+    if on_path:
+        return on_path, f"PATH: {on_path}"
+
+    return None, None
+
+
+def _require_adb(cfg):
+    adb, source = _find_adb(cfg)
+    if not adb:
+        print("error: adb not found. Set [android] adb=/path/to/adb in .bcconfig,",
+              file=sys.stderr)
+        print("       set unity_path so Unity's bundled adb can be located,",
+              file=sys.stderr)
+        print("       or install adb on PATH.", file=sys.stderr)
+        sys.exit(2)
+    LOG.info("using adb from %s", source)
+    return adb
+
+
+# ---------------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------------
+
+def _run_adb(adb, *adb_args, capture=False):
+    """Run adb with the given args. Returns CompletedProcess if capture=True else returncode."""
+    argv = [adb, *adb_args]
+    LOG.info("$ %s", " ".join(shlex.quote(a) for a in argv))
+    if capture:
+        return subprocess.run(argv, text=True, capture_output=True)
+    return subprocess.run(argv).returncode
+
+
+def _resolve_package(cli_value, cfg, *, allow_apk_derived=True):
+    """Pick a package name from CLI > config > derived-from-APK-filename."""
+    if cli_value:
+        return cli_value
+    if cfg.get("package"):
+        return cfg["package"]
+    if allow_apk_derived and cfg.get("apk"):
+        apk = cfg["apk"]
+        base = os.path.basename(apk)
+        if base.lower().endswith(".apk"):
+            base = base[:-4]
+        if "." in base:
+            return base
+    return None
+
+
+def _resolve_apk(cli_value, cfg):
+    """Pick an APK path from CLI > config."""
+    return cli_value or cfg.get("apk") or None
+
+
+def _require_package(cli_value, cfg):
+    pkg = _resolve_package(cli_value, cfg)
+    if not pkg:
+        print("error: no package specified. Pass one as an argument or set",
+              file=sys.stderr)
+        print("       [android] package = com.example.app in .bcconfig.",
+              file=sys.stderr)
+        sys.exit(2)
+    return pkg
+
+
+def _require_apk(cli_value, cfg):
+    apk = _resolve_apk(cli_value, cfg)
+    if not apk:
+        print("error: no APK specified. Pass one as an argument or set",
+              file=sys.stderr)
+        print("       [android] apk = path/to/file.apk in .bcconfig.",
+              file=sys.stderr)
+        sys.exit(2)
+    if not os.path.isfile(apk):
+        print(f"error: APK not found: {apk}", file=sys.stderr)
+        sys.exit(2)
+    return apk
+
+
+# ---------------------------------------------------------------------------
+# Subcommand handlers
+# ---------------------------------------------------------------------------
+
+def cmd_install(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    apk = _require_apk(args.apk, cfg)
+    pkg = _resolve_package(args.package, cfg, allow_apk_derived=True)
+
+    _run_adb(adb, "devices")
+    if pkg:
+        print(f"Stopping {pkg}")
+        _run_adb(adb, "shell", "am", "force-stop", pkg)
+    print(f"Installing {apk}")
+    return _run_adb(adb, "install", "-r", apk)
+
+
+def cmd_uninstall(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    pkg = _require_package(args.package, cfg)
+    print(f"Stopping {pkg}")
+    _run_adb(adb, "shell", "am", "force-stop", pkg)
+    print(f"Uninstalling {pkg}")
+    return _run_adb(adb, "uninstall", pkg)
+
+
+def cmd_run(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+
+    if args.component:
+        component = args.component
+    else:
+        pkg = _require_package(args.package, cfg)
+        component = f"{pkg}/.MainActivity"  # safe default; can be overridden via --component
+
+    intent = args.activity or cfg.get("activity") or "android.intent.action.MAIN"
+    print(f"Launching {component} with intent {intent}")
+    return _run_adb(adb, "shell", "am", "start",
+                    "-a", intent,
+                    "-c", "android.intent.category.LAUNCHER",
+                    "-n", component)
+
+
+def cmd_log(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+
+    out_path = args.output or cfg.get("log_file") or "adblog.txt"
+    filter_expr = (args.filter if args.filter is not None else cfg.get("logopts", "")).strip()
+
+    mode = "a" if args.append else "w"
+    if mode == "w":
+        try:
+            if os.path.exists(out_path):
+                os.remove(out_path)
+        except OSError as exc:
+            LOG.warning("could not remove existing log %s: %s", out_path, exc)
+
+    argv = [adb, "logcat"]
+    if filter_expr:
+        argv.extend(shlex.split(filter_expr))
+
+    print(f"Capturing logcat to {out_path}"
+          + (f" (filter: {filter_expr})" if filter_expr else "")
+          + (" (follow)" if args.follow else ""))
+
+    try:
+        with open(out_path, mode, encoding="utf-8", errors="replace") as fh:
+            proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                fh.write(line)
+                if args.follow:
+                    sys.stdout.write(line)
+                    sys.stdout.flush()
+            return proc.wait()
+    except KeyboardInterrupt:
+        return 130
+
+
+def cmd_list(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    if args.all:
+        return _run_adb(adb, "shell", "pm", "list", "packages")
+    return _run_adb(adb, "shell", "pm", "list", "packages", "-3")
+
+
+def cmd_dump(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    pkg = _require_package(args.package, cfg)
+    return _run_adb(adb, "shell", "pm", "dump", pkg)
+
+
+def cmd_activity(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    pkg = _require_package(args.package, cfg)
+    print(f"Resolved launcher activity for {pkg}:")
+    return _run_adb(adb, "shell", "cmd", "package", "resolve-activity", "--brief", pkg)
+
+
+def cmd_devices(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    return _run_adb(adb, "devices", "-l")
+
+
+def cmd_adb(args):
+    cfg = _effective_config()
+    adb = _require_adb(cfg)
+    return _run_adb(adb, *args.args)
+
+
+def cmd_config(args):
+    cfg = _effective_config()
+    adb, adb_source = _find_adb(cfg)
+    cfg_view = {k: v for k, v in cfg.items() if k != "_sources"}
+    cfg_view["adb_resolved"] = adb or ""
+    cfg_view["adb_resolved_source"] = adb_source or ""
+
+    if args.json:
+        print(json.dumps({"config": cfg_view, "sources": cfg.get("_sources", {})},
+                         indent=2, sort_keys=True))
+        return 0
+
+    sources = cfg.get("_sources", {})
+    print("Effective [android] configuration:")
+    print()
+    width = max((len(k) for k in cfg_view), default=10)
+    for key in sorted(cfg_view):
+        src = sources.get(key, "")
+        value = cfg_view[key] or "(unset)"
+        suffix = f"  [{src}]" if src else ""
+        print(f"  {key:<{width}}  {value}{suffix}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="android",
+        description="Android / ADB helpers for Unity and game development.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="enable verbose logging")
+    subs = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND")
+
+    p = subs.add_parser("install", help="install an APK to the connected device")
+    p.add_argument("apk", nargs="?", help="APK file (defaults to [android] apk)")
+    p.add_argument("--package", help="package name (force-stop before install)")
+    p.set_defaults(handler=cmd_install)
+
+    p = subs.add_parser("uninstall", help="uninstall a package from the device")
+    p.add_argument("package", nargs="?", help="package name (defaults to [android] package)")
+    p.set_defaults(handler=cmd_uninstall)
+
+    p = subs.add_parser("run", help="launch the package's main activity")
+    p.add_argument("package", nargs="?", help="package name (defaults to [android] package)")
+    p.add_argument("--activity", help="intent action (default: android.intent.action.MAIN)")
+    p.add_argument("--component", help="explicit ComponentName (overrides package/.MainActivity)")
+    p.set_defaults(handler=cmd_run)
+
+    p = subs.add_parser("log", help="capture logcat output to a file")
+    p.add_argument("-o", "--output", help="log file (defaults to [android] log_file)")
+    p.add_argument("-F", "--filter", help="logcat filter expression (e.g. 'Unity:V *:S')")
+    p.add_argument("-f", "--follow", action="store_true", help="also stream to terminal")
+    p.add_argument("--append", action="store_true", help="append instead of overwriting")
+    p.set_defaults(handler=cmd_log)
+
+    p = subs.add_parser("list", help="list installed packages on the device")
+    p.add_argument("--all", action="store_true", help="include system packages")
+    p.set_defaults(handler=cmd_list)
+
+    p = subs.add_parser("dump", help="dump package info from the device")
+    p.add_argument("package", nargs="?", help="package name (defaults to [android] package)")
+    p.set_defaults(handler=cmd_dump)
+
+    p = subs.add_parser("activity", help="show launcher activity for a package")
+    p.add_argument("package", nargs="?", help="package name (defaults to [android] package)")
+    p.set_defaults(handler=cmd_activity)
+
+    p = subs.add_parser("devices", help="list connected devices and emulators")
+    p.set_defaults(handler=cmd_devices)
+
+    p = subs.add_parser("adb", help="pass arguments directly to adb")
+    p.add_argument("args", nargs=argparse.REMAINDER, help="adb arguments")
+    p.set_defaults(handler=cmd_adb)
+
+    p = subs.add_parser("config", help="show effective android configuration")
+    p.add_argument("--json", action="store_true", help="emit as JSON")
+    p.set_defaults(handler=cmd_config)
+
+    return parser
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv == ["--bc-metadata"]:
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return 0
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if getattr(args, "verbose", False):
+        logging.getLogger().setLevel(logging.INFO)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    return handler(args) or 0
+
+
 if __name__ == "__main__":
-    sys.exit(run_group("android", SUMMARY, ROUTES))
+    sys.exit(main())

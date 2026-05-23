@@ -38,6 +38,23 @@ android log
 The command line remains first-class. Any web UI or automation layer must wrap
 the same commands rather than replacing them.
 
+## Repository Layout
+
+The repository is intentionally flat. Commands live at the root because they
+need to be on `PATH`; everything else lives in a small set of well-known
+directories.
+
+| Path | Purpose |
+|------|---------|
+| `*` (root, executable) | First-class commands, one per file. Metadata-backed where applicable. |
+| `commands/` | Bash-side init: aliases, colour helpers, bookmarks, config helpers loaded by `.bashrc`. |
+| `darwin/`, `cygwin/`, `unix/` | Platform-specific commands and `_init.sh`. Selected from `uname -s` at startup. |
+| `lib/` | Shared Python helpers consumed by commands and the UI (`bc_config`, `bc_metadata`, `bc_group`, `bc_output`). |
+| `webui/` | Flask app served by `bcui`. Reads command metadata via `lib/bc_metadata`. |
+| `completion/` | Bash completion scripts. `bash_common.completion.bash` is the metadata-driven generic completer; the others are vendored from upstream tools. |
+| `source_code/` | Bundled read-only configuration assets shipped with commands (e.g. `allman.uncrust.cfg`). Despite the name, this is not source code. See its README for details. |
+| `tests/` | `unittest` suite covering metadata discovery, shell startup, and `bcui`. |
+
 ## Shared Python Library
 
 Python commands should share reusable project functionality through `lib/`.
@@ -77,10 +94,10 @@ the existing implementations:
 
 | Group | Purpose |
 |-------|---------|
-| `bashcommon` | self-management: `init`, `update`, `config`, `ui` |
+| `bashcommon` | self-management: `init`, `update`, `config`, `ui`, `doctor`, `list` |
 | `project` | project setup/build helpers: `git-init`, `unity-init`, `shell-script`, `cmake`, `cmake-dir` |
 | `files` | file operations: `rename`, `format-cpp` |
-| `android` | Unity/ADB workflows: `install`, `run`, `uninstall`, `log`, `list`, `dump`, `activity`, `adb` |
+| `android` | Unity/ADB workflows: `install`, `run`, `uninstall`, `log`, `list`, `dump`, `activity`, `devices`, `adb`, `config` (first-class Python command; reads `[android]` from `.bcconfig` with legacy `.uadb` fallback) |
 | `blender` | Blender launch and Python helpers |
 | `docs` | cheat sheets and Markdown processing |
 | `safari` | Safari/macOS browser data helpers |
@@ -415,7 +432,7 @@ Candidate migrations:
 | `newsh` | `project new-shell` |
 | `mrename` | `files rename` |
 | `uncrust` | `files format-cpp` |
-| `uadb` | `android install`, `android run`, `android log` |
+| `uadb` | `android install`, `android run`, `android log`, … (done; uadb kept as compat) |
 
 ## Testing Direction
 

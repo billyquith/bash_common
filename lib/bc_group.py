@@ -54,6 +54,10 @@ def run_group(group_name, summary, routes, argv=None, bc_dir=None):
         _print_help(group_name, summary, routes, file=sys.stderr)
         return 1
 
+    handler = route.get("handler")
+    if handler is not None:
+        return handler(argv[1:]) or 0
+
     target = os.path.join(bc_dir, route["target"])
     target_argv = [*_target_command(target), *route.get("prefix", []), *argv[1:]]
     proc = subprocess.run(target_argv, cwd=os.getcwd(), env=command_env(bc_dir))

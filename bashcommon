@@ -2,12 +2,88 @@
 """bashcommon - bash_common self-management commands."""
 # Supports --bc-metadata discovery.
 
+import argparse
+import json
+import os
 import sys
 
 from lib.bc_group import passthrough_arg, run_group
+from lib.bc_metadata import inspect_commands
 
 
 SUMMARY = "bash_common self-management"
+
+
+def _bc_install_dir():
+    return os.environ.get("BC_INSTALL_DIR") or os.path.dirname(os.path.abspath(__file__))
+
+
+def _list_handler(argv):
+    parser = argparse.ArgumentParser(
+        prog="bashcommon list",
+        description="List metadata-backed bash_common commands.",
+    )
+    fmt = parser.add_mutually_exclusive_group()
+    fmt.add_argument("--json", action="store_true", help="emit JSON")
+    fmt.add_argument("--markdown", action="store_true",
+                     help="emit a Markdown table suitable for the README")
+    parser.add_argument("--with-subcommands", action="store_true",
+                        help="also list each command's subcommands (text mode only)")
+    parser.add_argument("--timeout", type=float, default=3.0,
+                        help="metadata discovery timeout per command, in seconds")
+    args = parser.parse_args(argv)
+
+    report = inspect_commands(_bc_install_dir(), timeout=args.timeout)
+    commands = report["commands"]
+
+    if args.json:
+        cleaned = []
+        for cmd in commands:
+            item = {k: v for k, v in cmd.items() if k != "_path"}
+            cleaned.append(item)
+        print(json.dumps({"commands": cleaned, "diagnostics": report["diagnostics"]},
+                         indent=2, sort_keys=True))
+        return 0
+
+    if args.markdown:
+        print("| Command | Summary |")
+        print("|---------|---------|")
+        for cmd in commands:
+            name = cmd.get("name", "")
+            summary = (cmd.get("summary", "") or "").replace("|", "\\|")
+            print(f"| `{name}` | {summary} |")
+        return 0
+
+    if not commands:
+        print("No metadata-backed commands discovered.")
+        if report["diagnostics"]:
+            print("")
+            print("Diagnostics:")
+            for item in report["diagnostics"]:
+                detail = item.get("message") or item.get("stderr") or ""
+                print(f"  [{item['status']}] {item['path']} {detail}".rstrip())
+        return 0
+
+    name_w = max(len(cmd.get("name", "")) for cmd in commands)
+    print(f"{len(commands)} metadata-backed commands:")
+    print("")
+    for cmd in commands:
+        name = cmd.get("name", "")
+        summary = cmd.get("summary", "")
+        print(f"  {name:<{name_w}}  {summary}")
+        if args.with_subcommands:
+            for sub in cmd.get("subcommands", []) or []:
+                sub_name = sub.get("name", "")
+                sub_summary = sub.get("summary", "")
+                print(f"    {sub_name:<{name_w}}  {sub_summary}")
+    if report["diagnostics"]:
+        print("")
+        print("Diagnostics:")
+        for item in report["diagnostics"]:
+            detail = item.get("message") or item.get("stderr") or ""
+            print(f"  [{item['status']}] {item['path']} {detail}".rstrip())
+    return 1 if report["diagnostics"] else 0
+
 
 ROUTES = {
     "init": {
@@ -63,6 +139,28 @@ ROUTES = {
             "args": [passthrough_arg()],
             "options": [],
             "artifacts": [],
+        },
+    },
+    "list": {
+        "handler": _list_handler,
+        "metadata": {
+            "name": "list",
+            "summary": "List discovered metadata-backed commands",
+            "safety": "read",
+            "args": [],
+            "options": [
+                {"name": "json", "flag": "--json", "kind": "boolean",
+                 "label": "JSON output"},
+                {"name": "markdown", "flag": "--markdown", "kind": "boolean",
+                 "label": "Markdown table (suitable for the README)"},
+                {"name": "with_subcommands", "flag": "--with-subcommands",
+                 "kind": "boolean", "label": "Also list each command's subcommands"},
+                {"name": "timeout", "flag": "--timeout", "kind": "string",
+                 "label": "Discovery timeout per command (seconds)"},
+            ],
+            "artifacts": [
+                {"kind": "json", "source": "stdout", "when_option": "json"},
+            ],
         },
     },
 }

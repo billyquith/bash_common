@@ -19,3 +19,15 @@ env/
 # Generated reports
 normalise-report.html
 catalog.html
+
+# Stray scaffolding from running newunity inside this repo while testing.
+# These directories belong inside a real Unity project, not here.
+/Assets/
+
+# Legacy uadb config files used by the standalone `uadb` script.
+/.uadb
+/.uadbmode
+/.uadb_*
+
+# Editor/Build artifacts
+adblog.txt

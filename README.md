@@ -76,7 +76,7 @@ adds `BC_INSTALL_DIR` to `PATH`:
 | `newsh` | Create a new Bash script from a starter template. |
 | `newgit` | Initialise a Git repo with standard attributes/ignore files. |
 | `newunity` | Scaffold a Unity project directory and `.gitignore`. |
-| `uadb` | Unity Android/ADB helper for install, run, uninstall, and logs. |
+| `uadb` | Legacy Unity ADB helper, kept for `.uadb` config compatibility. New work should use the `android` group. |
 | `cm` | Configure/update a CMake build directory. |
 | `cmdir` | Create a CMake build directory with a selected generator. |
 | `uncrust` | Reformat C/C++ files with the bundled Uncrustify config. |
@@ -100,6 +100,35 @@ All video operations are unified under the `video` command (Python3, backed by f
 Run `video <subcommand> -h` for per-subcommand help.
 
 Dependencies: `ffmpeg` and `ffprobe` must be on PATH. Run `bcinit` to install.
+
+### Android Tools
+
+All Android/ADB operations are unified under the `android` command (Python3, backed by `adb`):
+
+- `android install [APK] [--package PKG]` — install an APK; force-stops `PKG` first if known
+- `android uninstall [PACKAGE]` — uninstall a package
+- `android run [PACKAGE] [--activity ACTION] [--component COMP]` — launch the main activity
+- `android log [-o FILE] [-F FILTER] [-f] [--append]` — capture logcat output to a file; `-f` also streams to terminal
+- `android list [--all]` — list third-party (or all) installed packages
+- `android dump [PACKAGE]` — dump package info from the device
+- `android activity [PACKAGE]` — show the launcher activity for an installed package
+- `android devices` — list connected devices and emulators
+- `android adb ARGS...` — passthrough to the resolved adb binary
+- `android config [--json]` — print effective `[android]` config and the resolved adb path
+
+Run `android <subcommand> -h` for per-subcommand help.
+
+Configuration lives under `[android]` in `.bcconfig`. Available keys: `adb`,
+`unity_path`, `apk`, `package`, `activity`, `log_file`, `logopts`. ADB is
+located in this order: `[android] adb` → Unity's bundled adb under
+`[android] unity_path` → `adb` on `PATH`.
+
+Legacy `~/.uadb` and `./.uadb` files (the old `KEY=VALUE` format) are still
+read for backwards compatibility; values from `.bcconfig` override them.
+
+Dependencies: `adb`. The standalone `uadb` script is preserved for users with
+existing `.uadb` configs and modal config workflows; new work should use
+`android`.
 
 ### BC UI
 
@@ -143,6 +172,7 @@ to them:
 | `bashcommon config` | `bcconfig` |
 | `bashcommon ui` | `bcui` |
 | `bashcommon doctor` | `bcdoctor` |
+| `bashcommon list` | first-class (lists discovered metadata-backed commands) |
 | `project git-init` | `newgit` |
 | `project unity-init` | `newunity` |
 | `project shell-script` | `newsh` |
@@ -150,14 +180,16 @@ to them:
 | `project cmake-dir` | `cmdir` |
 | `files rename` | `mrename` |
 | `files format-cpp` | `uncrust` |
-| `android install` | `uadb -i` |
-| `android run` | `uadb -r` |
-| `android uninstall` | `uadb -u` |
-| `android log` | `uadb -l` |
-| `android list` | `uadb --list` |
-| `android dump` | `uadb --dump` |
-| `android activity` | `uadb --act` |
-| `android adb` | `uadb --cmd` |
+| `android install` | first-class (replaces `uadb -i`) |
+| `android uninstall` | first-class (replaces `uadb -u`) |
+| `android run` | first-class (replaces `uadb -r`) |
+| `android log` | first-class (replaces `uadb -l`) |
+| `android list` | first-class (replaces `uadb --list`) |
+| `android dump` | first-class (replaces `uadb --dump`) |
+| `android activity` | first-class (replaces `uadb --act`) |
+| `android devices` | first-class (no `uadb` equivalent) |
+| `android adb` | first-class (replaces `uadb --cmd`) |
+| `android config` | first-class (no `uadb` equivalent) |
 | `blender launch` | `blend` |
 | `blender python` | `blpy` |
 | `docs cheat` | `cheat` |
@@ -192,6 +224,19 @@ bashcommon doctor --json
 
 This reports commands that publish invalid metadata, fail during metadata
 discovery, or time out.
+
+### Listing Commands
+
+Use `bashcommon list` to enumerate metadata-backed commands. The output is
+sourced directly from each command's `--bc-metadata`, so it stays in sync as
+commands evolve:
+
+```bash
+bashcommon list                       # human-readable summary
+bashcommon list --with-subcommands    # include each command's subcommands
+bashcommon list --markdown            # Markdown table for the README
+bashcommon list --json                # full metadata as JSON
+```
 
 ### Platform-Specific Commands
 
