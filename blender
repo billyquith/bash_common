@@ -1,39 +1,333 @@
 #!/usr/bin/env python3
-"""blender - Blender command helpers."""
-# Supports --bc-metadata discovery.
+"""
+blender - Blender command helpers.
 
+Subcommands:
+  launch [BLENDER_ARGS...]         launch Blender; all args are forwarded to
+                                   the Blender executable
+  python [PYTHON_ARGS...]          run Blender's bundled Python interpreter with
+                                   Blender's addon and module paths pre-set
+  config [--json]                  show effective blender configuration
+
+Configuration: set [blender] blender_path and config_path in .bcconfig.
+blender_path should point to Blender.app/Contents (macOS).
+
+Run `blender <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import json
+import logging
+import os
+import subprocess
 import sys
 
-from lib.bc_group import passthrough_arg, run_group
+from lib.bc_config import load as load_bcconfig
 
+LOG = logging.getLogger(__name__)
+logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.WARNING)
 
-SUMMARY = "Blender command helpers"
+# ---------------------------------------------------------------------------
+# Config schema
+# ---------------------------------------------------------------------------
 
-ROUTES = {
-    "launch": {
-        "target": "blend",
-        "metadata": {
-            "name": "launch",
-            "summary": "Launch Blender using bookmarked directories",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Blender arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "python": {
-        "target": "blpy",
-        "metadata": {
-            "name": "python",
-            "summary": "Run Blender's bundled Python interpreter",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Python arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
+BCCONFIG_SCHEMA = {
+    "blender": [
+        ("blender_path", "",
+         "Path to Blender.app/Contents (macOS) or Blender install root"),
+        ("config_path", "",
+         "Path to Blender config dir (e.g. ~/Library/Application Support/Blender/4.2)"),
+        ("gameplay_bin", "",
+         "Optional extra tools directory added to PATH before launching Blender"),
+    ],
 }
 
 
+def _schema_for_metadata():
+    sections = {}
+    for section, entries in BCCONFIG_SCHEMA.items():
+        sections[section] = [
+            {"key": key, "default": default, "description": desc}
+            for key, default, desc in entries
+        ]
+    return sections
+
+
+def bc_metadata():
+    return {
+        "schema_version": 1,
+        "name": "blender",
+        "summary": "Blender launch and Python helpers",
+        "command_style": "subcommands",
+        "config_sections": _schema_for_metadata(),
+        "subcommands": [
+            {
+                "name": "launch",
+                "summary": "Launch Blender (args forwarded to the Blender executable)",
+                "safety": "write",
+                "args": [
+                    {"name": "args", "label": "Blender arguments",
+                     "kind": "path-list", "required": False},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "python",
+                "summary": "Run Blender's bundled Python interpreter",
+                "safety": "write",
+                "args": [
+                    {"name": "args", "label": "Python arguments",
+                     "kind": "path-list", "required": False},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "config",
+                "summary": "Show effective blender configuration",
+                "safety": "read",
+                "args": [],
+                "options": [
+                    {"name": "json", "flag": "--json", "kind": "boolean",
+                     "label": "Emit as JSON"},
+                ],
+                "artifacts": [
+                    {"kind": "json", "source": "stdout", "when_option": "json"},
+                ],
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Config resolution
+# ---------------------------------------------------------------------------
+
+def _effective_config():
+    cfg = {
+        key: default
+        for _section, entries in BCCONFIG_SCHEMA.items()
+        for key, default, _desc in entries
+    }
+    cfg["_sources"] = {k: "default" for k in cfg}
+
+    bcfg = load_bcconfig()
+    if bcfg.has_section("blender"):
+        for key, value in bcfg.items("blender"):
+            if value:
+                cfg[key] = value
+                cfg["_sources"][key] = ".bcconfig"
+
+    # Expand user on path values
+    for key in ("blender_path", "config_path", "gameplay_bin"):
+        if cfg[key]:
+            cfg[key] = os.path.expanduser(cfg[key])
+
+    return cfg
+
+
+def _require_blender_path(cfg):
+    path = cfg.get("blender_path", "").strip()
+    if not path:
+        print("error: blender_path is not configured.", file=sys.stderr)
+        print("Add [blender] blender_path = /path/to/Blender.app/Contents to .bcconfig",
+              file=sys.stderr)
+        sys.exit(2)
+    if not os.path.isdir(path):
+        print(f"error: blender_path does not exist: {path}", file=sys.stderr)
+        sys.exit(2)
+    return path
+
+
+def _blender_exe(blender_path):
+    """Return path to the Blender executable."""
+    # macOS: Blender.app/Contents/MacOS/blender
+    macos = os.path.join(blender_path, "MacOS", "blender")
+    if os.path.isfile(macos):
+        return macos
+    # Linux / other: blender in the root
+    root_exe = os.path.join(blender_path, "blender")
+    if os.path.isfile(root_exe):
+        return root_exe
+    return None
+
+
+def _blender_version(blender_path):
+    """Detect Blender version from Resources/<version>/ directory structure."""
+    resources = os.path.join(blender_path, "Resources")
+    if not os.path.isdir(resources):
+        return None
+    versions = sorted(
+        (d for d in os.listdir(resources)
+         if os.path.isdir(os.path.join(resources, d))
+         and d.replace(".", "").isdigit()),
+        reverse=True,
+    )
+    return versions[0] if versions else None
+
+
+def _blender_python_exe(blender_path, version):
+    """Locate Blender's bundled Python executable."""
+    py_dir = os.path.join(blender_path, "Resources", version, "python")
+    if not os.path.isdir(py_dir):
+        return None
+    bin_dir = os.path.join(py_dir, "bin")
+    if not os.path.isdir(bin_dir):
+        return None
+    for entry in sorted(os.listdir(bin_dir), reverse=True):
+        if entry.startswith("python") and not entry.endswith(".zip"):
+            candidate = os.path.join(bin_dir, entry)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
+def _blender_pythonpath(blender_path, config_path, version):
+    """Build PYTHONPATH for Blender's addon / module directories."""
+    bl_scripts = os.path.join(blender_path, "Resources", version, "scripts")
+    parts = []
+    if config_path:
+        for sub in (
+            "scripts/addons_contrib",
+            "scripts/addons",
+            "scripts/modules",
+            "scripts/startup",
+            "scripts/addons/modules",
+        ):
+            parts.append(os.path.join(config_path, sub))
+    for sub in (
+        "addons_contrib",
+        "addons",
+        "modules",
+        "startup",
+        "addons/modules",
+    ):
+        parts.append(os.path.join(bl_scripts, sub))
+    return ":".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Subcommand handlers
+# ---------------------------------------------------------------------------
+
+def cmd_launch(args):
+    cfg = _effective_config()
+    blender_path = _require_blender_path(cfg)
+
+    exe = _blender_exe(blender_path)
+    if not exe:
+        print(f"error: Blender executable not found under: {blender_path}", file=sys.stderr)
+        return 2
+
+    env = os.environ.copy()
+    gameplay_bin = cfg.get("gameplay_bin", "").strip()
+    if gameplay_bin and os.path.isdir(gameplay_bin):
+        env["PATH"] = env.get("PATH", "") + os.pathsep + gameplay_bin
+
+    argv = [exe] + args.args
+    LOG.info("$ %s", " ".join(argv))
+    os.execve(exe, argv, env)
+
+
+def cmd_python(args):
+    cfg = _effective_config()
+    blender_path = _require_blender_path(cfg)
+    config_path = cfg.get("config_path", "").strip()
+
+    version = _blender_version(blender_path)
+    if not version:
+        print(f"error: could not detect Blender version under: {blender_path}/Resources",
+              file=sys.stderr)
+        return 2
+
+    py_exe = _blender_python_exe(blender_path, version)
+    if not py_exe:
+        print(f"error: Blender Python not found (version {version})", file=sys.stderr)
+        return 2
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = _blender_pythonpath(blender_path, config_path, version)
+
+    argv = [py_exe] + args.args
+    LOG.info("$ %s", " ".join(argv))
+    os.execve(py_exe, argv, env)
+
+
+def cmd_config(args):
+    cfg = _effective_config()
+    blender_path = cfg.get("blender_path", "")
+    version = _blender_version(blender_path) if blender_path else None
+    exe = _blender_exe(blender_path) if blender_path else None
+    py_exe = _blender_python_exe(blender_path, version) if (blender_path and version) else None
+
+    view = {k: v for k, v in cfg.items() if k != "_sources"}
+    view["version_detected"] = version or ""
+    view["blender_exe"] = exe or ""
+    view["python_exe"] = py_exe or ""
+
+    if args.json:
+        print(json.dumps({"config": view, "sources": cfg.get("_sources", {})},
+                         indent=2, sort_keys=True))
+        return 0
+
+    sources = cfg.get("_sources", {})
+    print("Effective [blender] configuration:")
+    print()
+    width = max((len(k) for k in view), default=10)
+    for key in sorted(view):
+        src = sources.get(key, "")
+        value = view[key] or "(unset)"
+        suffix = f"  [{src}]" if src else ""
+        print(f"  {key:<{width}}  {value}{suffix}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="blender",
+        description="Blender launch and Python helpers.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subs = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND")
+
+    p = subs.add_parser("launch", help="launch Blender (all args forwarded to blender)")
+    p.add_argument("args", nargs=argparse.REMAINDER, help="Blender arguments")
+    p.set_defaults(handler=cmd_launch)
+
+    p = subs.add_parser("python",
+                         help="run Blender's bundled Python with Blender paths pre-set")
+    p.add_argument("args", nargs=argparse.REMAINDER, help="Python arguments")
+    p.set_defaults(handler=cmd_python)
+
+    p = subs.add_parser("config", help="show effective blender configuration")
+    p.add_argument("--json", action="store_true", help="emit as JSON")
+    p.set_defaults(handler=cmd_config)
+
+    return parser
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv == ["--bc-metadata"]:
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return 0
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    return handler(args) or 0
+
+
 if __name__ == "__main__":
-    sys.exit(run_group("blender", SUMMARY, ROUTES))
+    sys.exit(main())

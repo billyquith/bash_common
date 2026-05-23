@@ -1,39 +1,216 @@
 #!/usr/bin/env python3
-"""docs - documentation helpers."""
-# Supports --bc-metadata discovery.
+"""
+docs - documentation helpers.
 
+Subcommands:
+  cheat  [-l] [-e] [SHEET]         view, list, or edit local cheat sheets
+  markdown [OPTIONS] [FILE...]     render Markdown to HTML via markdown2
+
+Run `docs <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import json
+import os
+import subprocess
 import sys
+import webbrowser
 
-from lib.bc_group import passthrough_arg, run_group
+from lib.bc_config import load as load_bcconfig
 
+# ---------------------------------------------------------------------------
+# Config schema
+# ---------------------------------------------------------------------------
 
-SUMMARY = "documentation helpers"
-
-ROUTES = {
-    "cheat": {
-        "target": "cheat",
-        "metadata": {
-            "name": "cheat",
-            "summary": "View or edit local cheat sheets",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Cheat sheet arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "markdown": {
-        "target": "markdown",
-        "metadata": {
-            "name": "markdown",
-            "summary": "Render Markdown through markdown2",
-            "safety": "read",
-            "args": [passthrough_arg("args", "Markdown arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
+BCCONFIG_SCHEMA = {
+    "docs": [
+        ("cheat_dir", "",
+         "Path to the cheat sheet collection; empty = $BC_INSTALL_DIR/.cheat"),
+    ],
 }
 
 
+def _schema_for_metadata():
+    sections = {}
+    for section, entries in BCCONFIG_SCHEMA.items():
+        sections[section] = [
+            {"key": key, "default": default, "description": desc}
+            for key, default, desc in entries
+        ]
+    return sections
+
+
+def bc_metadata():
+    return {
+        "schema_version": 1,
+        "name": "docs",
+        "summary": "Documentation helpers",
+        "command_style": "subcommands",
+        "config_sections": _schema_for_metadata(),
+        "subcommands": [
+            {
+                "name": "cheat",
+                "summary": "View, list, or edit local cheat sheets",
+                "safety": "read",
+                "args": [
+                    {"name": "sheet", "label": "Cheat sheet name (without .md)",
+                     "kind": "string", "required": False},
+                ],
+                "options": [
+                    {"name": "list", "flag": "--list", "short_flag": "-l",
+                     "kind": "boolean", "label": "List available cheat sheets"},
+                    {"name": "edit", "flag": "--edit", "short_flag": "-e",
+                     "kind": "boolean",
+                     "label": "Open the cheat sheet directory in $EDITOR"},
+                    {"name": "cheat_dir", "flag": "--dir", "kind": "path",
+                     "label": "Cheat sheet directory", "config": "docs.cheat_dir"},
+                ],
+                "artifacts": [],
+            },
+            {
+                "name": "markdown",
+                "summary": "Render Markdown to HTML via markdown2",
+                "safety": "read",
+                "args": [
+                    {"name": "files", "label": "Markdown file(s)",
+                     "kind": "path-list", "required": False},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# cheat
+# ---------------------------------------------------------------------------
+
+def _bc_install_dir():
+    return os.environ.get("BC_INSTALL_DIR") or os.path.dirname(os.path.abspath(__file__))
+
+
+def _cheat_dir(cli_dir=None):
+    if cli_dir:
+        return os.path.expanduser(cli_dir)
+    bcfg = load_bcconfig()
+    if bcfg.has_section("docs"):
+        val = bcfg.get("docs", "cheat_dir", fallback="").strip()
+        if val:
+            return os.path.expanduser(val)
+    return os.path.join(_bc_install_dir(), ".cheat")
+
+
+def cmd_cheat(args):
+    cheat_dir = _cheat_dir(args.dir)
+    sheets_dir = os.path.join(cheat_dir, "sheets")
+
+    if args.list:
+        if not os.path.isdir(sheets_dir):
+            print(f"error: cheat sheet directory not found: {sheets_dir}", file=sys.stderr)
+            return 1
+        sheets = sorted(
+            f[:-3] for f in os.listdir(sheets_dir) if f.endswith(".md")
+        )
+        for s in sheets:
+            print(s)
+        return 0
+
+    if args.edit:
+        if not os.path.isdir(cheat_dir):
+            print(f"error: cheat sheet directory not found: {cheat_dir}", file=sys.stderr)
+            print("Clone a cheat sheet collection there or set [docs] cheat_dir in .bcconfig.",
+                  file=sys.stderr)
+            return 1
+        editor = os.environ.get("EDITOR", "vi")
+        return subprocess.run([editor, cheat_dir]).returncode
+
+    sheet_query = ""
+    if args.sheet:
+        sheet_path = os.path.join(sheets_dir, f"{args.sheet}.md")
+        if not os.path.isfile(sheet_path):
+            print(f"error: unknown cheat sheet: {args.sheet}", file=sys.stderr)
+            return 1
+        sheet_query = f"?sheet={args.sheet}"
+
+    index = os.path.join(cheat_dir, "index.html")
+    if not os.path.isfile(index):
+        print(f"error: cheat sheet index not found: {index}", file=sys.stderr)
+        return 1
+
+    url = f"file://{index}{sheet_query}"
+    webbrowser.open(url)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# markdown
+# ---------------------------------------------------------------------------
+
+def _ensure_markdown2():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(script_dir, ".venv", "bin", "python")
+    if (os.path.exists(venv_python)
+            and os.path.abspath(sys.executable) != os.path.abspath(venv_python)):
+        os.execv(venv_python, [venv_python, __file__, *sys.argv[1:]])
+
+
+def cmd_markdown(args):
+    _ensure_markdown2()
+    try:
+        import markdown2
+    except ModuleNotFoundError:
+        print("error: markdown2 is not installed. Run 'bcinit' to install dependencies.",
+              file=sys.stderr)
+        return 1
+    markdown2.main(["markdown2"] + args.files)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="docs",
+        description="Documentation helpers.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subs = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND")
+
+    p = subs.add_parser("cheat", help="view, list, or edit local cheat sheets")
+    p.add_argument("sheet", nargs="?", help="cheat sheet name (without .md extension)")
+    p.add_argument("-l", "--list", action="store_true", help="list available cheat sheets")
+    p.add_argument("-e", "--edit", action="store_true",
+                   help="open the cheat sheet directory in $EDITOR")
+    p.add_argument("--dir", help="cheat sheet directory (overrides .bcconfig and default)")
+    p.set_defaults(handler=cmd_cheat)
+
+    p = subs.add_parser("markdown", help="render Markdown to HTML via markdown2")
+    p.add_argument("files", nargs=argparse.REMAINDER, help="Markdown files and markdown2 options")
+    p.set_defaults(handler=cmd_markdown)
+
+    return parser
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv == ["--bc-metadata"]:
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return 0
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    return handler(args) or 0
+
+
 if __name__ == "__main__":
-    sys.exit(run_group("docs", SUMMARY, ROUTES))
+    sys.exit(main())

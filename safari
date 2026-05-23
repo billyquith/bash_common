@@ -1,28 +1,306 @@
 #!/usr/bin/env python3
-"""safari - Safari/macOS browser data helpers."""
-# Supports --bc-metadata discovery.
+"""
+safari - Safari and macOS browser data helpers.
 
+Subcommands:
+  cookies FILE [-d] [-e FILE] [-b DOMAIN...] [-w DOMAIN...]
+                                   read, filter, and export Safari binary
+                                   cookie files; FILE defaults to the standard
+                                   Safari cookies path
+
+Run `safari <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import json
+import logging
+import os
+import subprocess
 import sys
+from collections import defaultdict
+from io import BytesIO
+from struct import pack, unpack
+from time import gmtime, strftime
 
-from lib.bc_group import passthrough_arg, run_group
+from lib.bc_config import load as load_bcconfig
 
+log = logging.getLogger(__name__)
+log.setLevel(logging.WARNING)
+_handler = logging.StreamHandler()
+_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+log.addHandler(_handler)
 
-SUMMARY = "Safari and macOS browser data helpers"
+# ---------------------------------------------------------------------------
+# Config schema
+# ---------------------------------------------------------------------------
 
-ROUTES = {
-    "cookies": {
-        "target": "cookies",
-        "metadata": {
-            "name": "cookies",
-            "summary": "Read, filter, and export Safari binary cookie files",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Cookie command arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
+_DEFAULT_COOKIES_FILE = "~/Library/Cookies/Cookies.binarycookies"
+
+BCCONFIG_SCHEMA = {
+    "safari": [
+        ("cookies_file", _DEFAULT_COOKIES_FILE,
+         "Path to Safari's binary cookies file"),
+    ],
 }
 
 
+def _schema_for_metadata():
+    sections = {}
+    for section, entries in BCCONFIG_SCHEMA.items():
+        sections[section] = [
+            {"key": key, "default": default, "description": desc}
+            for key, default, desc in entries
+        ]
+    return sections
+
+
+def bc_metadata():
+    return {
+        "schema_version": 1,
+        "name": "safari",
+        "summary": "Safari and macOS browser data helpers",
+        "command_style": "subcommands",
+        "config_sections": _schema_for_metadata(),
+        "subcommands": [
+            {
+                "name": "cookies",
+                "summary": "Read, filter, and export Safari binary cookie files",
+                "safety": "write",
+                "args": [
+                    {"name": "file", "label": "Cookies file",
+                     "kind": "path", "required": False, "exists": True,
+                     "config": "safari.cookies_file"},
+                ],
+                "options": [
+                    {"name": "dump", "flag": "--dump", "short_flag": "-d",
+                     "kind": "boolean", "label": "Print all cookies to stdout"},
+                    {"name": "export", "flag": "--export", "short_flag": "-e",
+                     "kind": "path", "label": "Export cookies to JSON file",
+                     "artifact": "json"},
+                    {"name": "blacklist", "flag": "--blacklist", "short_flag": "-b",
+                     "kind": "string", "label": "Remove cookies for these domains"},
+                    {"name": "whitelist", "flag": "--whitelist", "short_flag": "-w",
+                     "kind": "string", "label": "Keep only cookies for these domains"},
+                    {"name": "verbose", "flag": "--verbose", "short_flag": "-v",
+                     "kind": "boolean", "label": "Increase verbosity (use twice for debug)"},
+                ],
+                "artifacts": [
+                    {"kind": "json", "path_option": "export"},
+                ],
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Binary cookie parser / writer (inlined from cookies)
+# ---------------------------------------------------------------------------
+
+def _flag_type(raw_flag):
+    types = {0: None, 1: "secure", 4: "http only", 5: "Secure, http only"}
+    return types.get(raw_flag)
+
+
+def _mac_date(raw_date):
+    return strftime("%a, %d %b %Y ", gmtime(raw_date + 978307200))[:-1]
+
+
+def _parse_cookies(file):
+    cookies = []
+    magic = file.read(4)
+    if magic != b"cook":
+        log.error("File is not a valid binary cookie format")
+        return cookies
+
+    num_pages = unpack(">i", file.read(4))[0]
+    page_sizes = [unpack(">i", file.read(4))[0] for _ in range(num_pages)]
+    pages = [file.read(ps) for ps in page_sizes]
+
+    for page in pages:
+        page = BytesIO(page)
+        page.read(4)
+        num_cookies = unpack("<i", page.read(4))[0]
+        cookie_offsets = [unpack("<i", page.read(4))[0] for _ in range(num_cookies)]
+        page.read(4)
+
+        for offset in cookie_offsets:
+            content = {}
+            page.seek(offset)
+            content["size"] = unpack("<i", page.read(4))[0]
+            cookie = BytesIO(page.read(content["size"]))
+            cookie.read(4)
+            content["flags"] = unpack("<i", cookie.read(4))[0]
+            cookie.read(4)
+            for key in ["domain", "name", "path", "value"]:
+                content[key + "_offset"] = unpack("<i", cookie.read(4))[0]
+            cookie.read(8)
+            content["expiry_date"] = unpack("<d", cookie.read(8))[0]
+            content["creation_date"] = unpack("<d", cookie.read(8))[0]
+            for i in ["domain", "name", "path", "value"]:
+                n = cookie.read(1)
+                value = []
+                while unpack("<b", n)[0] != 0:
+                    value.append(n.decode("utf8"))
+                    n = cookie.read(1)
+                content[i] = "".join(value)
+            cookies.append(content)
+
+    return cookies
+
+
+def _save_cookies(file, cookies):
+    file.seek(0, 0)
+    file.truncate()
+    file.write(b"cook")
+
+    pages = defaultdict(list)
+    for cookie in cookies:
+        pages[cookie["domain"]].append(cookie)
+
+    file.write(pack(">i", len(pages)))
+
+    for page in pages.values():
+        cookies_size = sum(c["size"] for c in page)
+        offsets_size = 4 * len(page)
+        file.write(pack(">i", cookies_size + offsets_size + 12))
+
+    for page in pages.values():
+        file.write(pack(">i", 0x00000100))
+        file.write(pack("<i", len(page)))
+        for k, cookie in enumerate(page):
+            previous_size = sum(c["size"] for c in page[:k])
+            file.write(pack("<i", previous_size + len(page) * 4 + 8))
+
+        for cookie in page:
+            file.write(pack("<i", cookie["size"]))
+            file.write(pack("B", 0) * 4)
+            file.write(pack("<i", cookie["flags"]))
+            file.write(pack("B", 0) * 4)
+            for key in ["domain", "name", "path", "value"]:
+                file.write(pack("<i", cookie[key + "_offset"]))
+            file.write(pack("B", 0) * 8)
+            file.write(pack("<d", cookie["expiry_date"]))
+            file.write(pack("<d", cookie["creation_date"]))
+            for key in ["domain", "name", "path", "value"]:
+                for c in cookie[key]:
+                    file.write(pack("<b", ord(c)))
+                file.write(pack("B", 0))
+        file.write(pack("B", 0) * 4)
+
+    file.write(pack("B", 0) * 7 + pack("B", 0x22))
+
+
+# ---------------------------------------------------------------------------
+# cookies handler
+# ---------------------------------------------------------------------------
+
+def _default_cookies_file():
+    bcfg = load_bcconfig()
+    if bcfg.has_section("safari"):
+        val = bcfg.get("safari", "cookies_file", fallback="").strip()
+        if val:
+            return os.path.expanduser(val)
+    return os.path.expanduser(_DEFAULT_COOKIES_FILE)
+
+
+def cmd_cookies(args):
+    if args.verbose == 1:
+        log.setLevel(logging.INFO)
+    elif args.verbose and args.verbose >= 2:
+        log.setLevel(logging.DEBUG)
+
+    file_path = args.file or _default_cookies_file()
+    if not os.path.isfile(file_path):
+        print(f"error: cookies file not found: {file_path}", file=sys.stderr)
+        print("Set [safari] cookies_file in .bcconfig or pass the path as an argument.",
+              file=sys.stderr)
+        return 2
+
+    mode = "r+b" if (args.blacklist or args.whitelist) else "rb"
+    with open(file_path, mode) as fh:
+        cookies = _parse_cookies(fh)
+
+        if args.dump:
+            for c in cookies:
+                if args.verbose and args.verbose >= 2:
+                    for key, value in c.items():
+                        print(f"  {key}: {value}")
+                    print("")
+                else:
+                    print(
+                        f"* domain: {c['domain']}\n  name: {c['name']}\n"
+                        f"  flags: {_flag_type(c['flags'])}\n"
+                        f"  created: {_mac_date(c['creation_date'])}, "
+                        f"expires: {_mac_date(c['expiry_date'])}\n"
+                    )
+
+        elif args.export:
+            with open(args.export, "w", encoding="utf-8") as out_fh:
+                json.dump(cookies, out_fh)
+            log.warning("Wrote %d cookies to %s", len(cookies), args.export)
+
+        else:
+            if args.whitelist:
+                cookies = [c for c in cookies if c["domain"] in args.whitelist]
+            elif args.blacklist:
+                cookies = [c for c in cookies if c["domain"] not in args.blacklist]
+
+            subprocess.call(["killall", "cookied"])
+            _save_cookies(fh, cookies)
+            log.warning("You have to restart Safari to load changes")
+
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="safari",
+        description="Safari and macOS browser data helpers.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subs = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND")
+
+    p = subs.add_parser("cookies",
+                         help="read, filter, and export Safari binary cookie files")
+    p.add_argument("file", nargs="?",
+                   help="cookies file (default: ~/Library/Cookies/Cookies.binarycookies)")
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument("-d", "--dump", action="store_true",
+                      help="print all cookies to stdout")
+    mode.add_argument("-e", "--export", metavar="FILE",
+                      help="export cookies to a JSON file")
+    mode.add_argument("-b", "--blacklist", type=str, nargs="+", metavar="DOMAIN",
+                      help="remove cookies for the given domains and rewrite the file")
+    mode.add_argument("-w", "--whitelist", type=str, nargs="+", metavar="DOMAIN",
+                      help="keep only cookies for the given domains and rewrite the file")
+    p.add_argument("-v", "--verbose", action="count", default=0,
+                   help="increase verbosity (use twice for debug output)")
+    p.set_defaults(handler=cmd_cookies)
+
+    return parser
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv == ["--bc-metadata"]:
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return 0
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    return handler(args) or 0
+
+
 if __name__ == "__main__":
-    sys.exit(run_group("safari", SUMMARY, ROUTES))
+    sys.exit(main())

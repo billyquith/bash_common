@@ -58,32 +58,19 @@ adds `BC_INSTALL_DIR` to `PATH`:
 
 | Command | Purpose |
 |---------|---------|
+| `bashcommon` | Self-management: init, update, config, ui, doctor, list. |
+| `project` | Project setup and build helpers. |
+| `files` | File operation helpers. |
+| `android` | Android/ADB helpers for Unity and game development. |
+| `blender` | Blender launch and Python helpers. |
+| `docs` | Documentation helpers (cheat sheets, Markdown). |
+| `safari` | Safari/macOS browser data helpers. |
+| `video` | Unified ffmpeg-backed video command with subcommands. |
 | `bcinit` | Check/install dependencies, shell setup, and user config. |
 | `bcconfig` | Show, query, and initialise `.bcconfig` settings. |
 | `bcui` | Start the local browser UI for metadata-backed commands. |
 | `bcdoctor` | Validate metadata-backed command discovery. |
-| `bashcommon` | Grouped bash_common self-management commands. |
-| `project` | Grouped project setup and build helpers. |
-| `files` | Grouped file operation helpers. |
-| `android` | Grouped Android/ADB helpers. |
-| `blender` | Grouped Blender helpers. |
-| `docs` | Grouped documentation helpers. |
-| `safari` | Grouped Safari/macOS browser data helpers. |
 | `bcup` | Update bash_common and, optionally, bundled completions. |
-| `video` | Unified ffmpeg-backed video command with subcommands. |
-| `markdown` | Run the `markdown2` command-line processor. |
-| `mrename` | Generate a reviewed rename script from regex matches. |
-| `newsh` | Create a new Bash script from a starter template. |
-| `newgit` | Initialise a Git repo with standard attributes/ignore files. |
-| `newunity` | Scaffold a Unity project directory and `.gitignore`. |
-| `uadb` | Legacy Unity ADB helper, kept for `.uadb` config compatibility. New work should use the `android` group. |
-| `cm` | Configure/update a CMake build directory. |
-| `cmdir` | Create a CMake build directory with a selected generator. |
-| `uncrust` | Reformat C/C++ files with the bundled Uncrustify config. |
-| `blend` | Launch Blender using bookmarked Blender paths. |
-| `blpy` | Run Blender's bundled Python interpreter. |
-| `cheat` | View or edit local cheat sheets. |
-| `cookies` | Read, filter, and export Safari binary cookie files. |
 
 ### Video Tools
 
@@ -126,9 +113,7 @@ located in this order: `[android] adb` → Unity's bundled adb under
 Legacy `~/.uadb` and `./.uadb` files (the old `KEY=VALUE` format) are still
 read for backwards compatibility; values from `.bcconfig` override them.
 
-Dependencies: `adb`. The standalone `uadb` script is preserved for users with
-existing `.uadb` configs and modal config workflows; new work should use
-`android`.
+Dependencies: `adb`.
 
 ### BC UI
 
@@ -161,40 +146,18 @@ Dependency: Flask, installed by `bcinit` into bash_common's local `.venv`.
 
 ### Grouped Commands
 
-New command work should prefer grouped commands with subcommands. Existing
-standalone commands are still available and the grouped forms currently delegate
-to them:
+All grouped commands are first-class Python commands with full subcommand
+metadata, proper argparse, and `.bcconfig` integration.
 
-| Grouped command | Existing command |
-|-----------------|------------------|
-| `bashcommon init` | `bcinit` |
-| `bashcommon update` | `bcup` |
-| `bashcommon config` | `bcconfig` |
-| `bashcommon ui` | `bcui` |
-| `bashcommon doctor` | `bcdoctor` |
-| `bashcommon list` | first-class (lists discovered metadata-backed commands) |
-| `project git-init` | `newgit` |
-| `project unity-init` | `newunity` |
-| `project shell-script` | `newsh` |
-| `project cmake` | `cm` |
-| `project cmake-dir` | `cmdir` |
-| `files rename` | `mrename` |
-| `files format-cpp` | `uncrust` |
-| `android install` | first-class (replaces `uadb -i`) |
-| `android uninstall` | first-class (replaces `uadb -u`) |
-| `android run` | first-class (replaces `uadb -r`) |
-| `android log` | first-class (replaces `uadb -l`) |
-| `android list` | first-class (replaces `uadb --list`) |
-| `android dump` | first-class (replaces `uadb --dump`) |
-| `android activity` | first-class (replaces `uadb --act`) |
-| `android devices` | first-class (no `uadb` equivalent) |
-| `android adb` | first-class (replaces `uadb --cmd`) |
-| `android config` | first-class (no `uadb` equivalent) |
-| `blender launch` | `blend` |
-| `blender python` | `blpy` |
-| `docs cheat` | `cheat` |
-| `docs markdown` | `markdown` |
-| `safari cookies` | `cookies` |
+| Command | Subcommands |
+|---------|-------------|
+| `bashcommon` | `init`, `update`, `config`, `ui`, `doctor`, `list` |
+| `project` | `git-init`, `unity-init`, `shell-script`, `cmake`, `cmake-dir` |
+| `files` | `rename`, `format-cpp` |
+| `android` | `install`, `uninstall`, `run`, `log`, `list`, `dump`, `activity`, `devices`, `adb`, `config` |
+| `blender` | `launch`, `python`, `config` |
+| `docs` | `cheat`, `markdown` |
+| `safari` | `cookies` |
 
 ### Completion
 

@@ -1,39 +1,315 @@
 #!/usr/bin/env python3
-"""files - file operation helpers."""
-# Supports --bc-metadata discovery.
+"""
+files - file operation helpers.
 
+Subcommands:
+  rename  INPUT OUTPUT [-d] [-v] [-o FILE]
+                                   batch-rename files in the current directory
+                                   using a regex INPUT pattern and ${N} output
+                                   template; writes a rename.sh script by default
+  format-cpp PATH                  reformat C/C++ source files using the bundled
+                                   Uncrustify config
+
+Run `files <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import codecs
+import glob
+import json
+import logging
+import os
+import platform
+import re
+import shutil
+import subprocess
 import sys
 
-from lib.bc_group import passthrough_arg, run_group
+from lib.bc_config import load as load_bcconfig
 
+LOG = logging.getLogger(__name__)
+logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.WARNING)
 
-SUMMARY = "file operation helpers"
+# ---------------------------------------------------------------------------
+# Config schema
+# ---------------------------------------------------------------------------
 
-ROUTES = {
-    "rename": {
-        "target": "mrename",
-        "metadata": {
-            "name": "rename",
-            "summary": "Generate a reviewed rename script from regex matches",
-            "safety": "write",
-            "args": [passthrough_arg("args", "mrename arguments")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "format-cpp": {
-        "target": "uncrust",
-        "metadata": {
-            "name": "format-cpp",
-            "summary": "Format C/C++ files with the bundled Uncrustify config",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Path and options")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
+BCCONFIG_SCHEMA = {
+    "files": [
+        ("uncrustify_config", "",
+         "Path to Uncrustify config file; empty = use bundled source_code/allman.uncrust.cfg"),
+    ],
 }
 
 
+def _schema_for_metadata():
+    sections = {}
+    for section, entries in BCCONFIG_SCHEMA.items():
+        sections[section] = [
+            {"key": key, "default": default, "description": desc}
+            for key, default, desc in entries
+        ]
+    return sections
+
+
+def bc_metadata():
+    return {
+        "schema_version": 1,
+        "name": "files",
+        "summary": "File operation helpers",
+        "command_style": "subcommands",
+        "config_sections": _schema_for_metadata(),
+        "subcommands": [
+            {
+                "name": "rename",
+                "summary": "Batch-rename files using regex capture groups",
+                "safety": "write",
+                "args": [
+                    {"name": "input", "label": "Input regex (capture groups)",
+                     "kind": "string", "required": True},
+                    {"name": "output", "label": "Output template (${N} substitution)",
+                     "kind": "string", "required": True},
+                ],
+                "options": [
+                    {"name": "dry", "flag": "--dry", "short_flag": "-d", "kind": "boolean",
+                     "label": "Dry run: show matches without writing script"},
+                    {"name": "verbose", "flag": "--verbose", "short_flag": "-v",
+                     "kind": "boolean", "label": "Verbose output"},
+                    {"name": "outfile", "flag": "--outfile", "short_flag": "-o",
+                     "kind": "path", "label": "Output script filename (default: rename.sh)"},
+                ],
+                "artifacts": [
+                    {"kind": "shell", "path_option": "outfile"},
+                ],
+            },
+            {
+                "name": "format-cpp",
+                "summary": "Reformat C/C++ files with the bundled Uncrustify config",
+                "safety": "write",
+                "args": [
+                    {"name": "path", "label": "Source file or directory", "kind": "path",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "config", "flag": "--config", "kind": "path",
+                     "label": "Uncrustify config file",
+                     "config": "files.uncrustify_config"},
+                ],
+                "artifacts": [],
+            },
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# rename (mrename logic)
+# ---------------------------------------------------------------------------
+
+_IS_POSIX = platform.system() in ("Darwin", "Linux")
+
+
+class _SubstString:
+    _re_subst = re.compile(r"\$\{(\d+)\}")
+
+    def prep_input(self, re_str_in):
+        try:
+            self._re_in = re.compile(re_str_in, re.DOTALL)
+        except re.error as exc:
+            LOG.error(str(exc))
+            sys.exit(1)
+
+    def match_input(self, s):
+        self._match = self._re_in.match(s)
+        return self._match is not None
+
+    def calc_output(self, str_out):
+        groups = self._match.groups()
+        def repl(m):
+            return groups[int(m.group(1)) - 1]
+        return self._re_subst.sub(repl, str_out)
+
+
+class _OutFile:
+    def __init__(self):
+        self.cmds = []
+        if _IS_POSIX:
+            self.cmds += ["#!/usr/bin/env bash", ""]
+
+    def rename(self, fn_from, fn_to):
+        if _IS_POSIX:
+            self.cmds.append('mv "{}" "{}"'.format(fn_from, fn_to))
+
+    def write(self, outfile):
+        try:
+            with open(outfile, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(self.cmds))
+        except IOError as exc:
+            LOG.error(str(exc))
+
+
+def _unescaped(s):
+    return codecs.decode(str(s), "unicode_escape")
+
+
+def cmd_rename(args):
+    if args.verbose:
+        LOG.setLevel(logging.DEBUG)
+
+    fn_in = _unescaped(args.input) if not args.dry else args.input
+    fn_out = args.output
+    outfile = args.outfile or "rename.sh"
+
+    files = sorted(os.listdir("."))
+    LOG.info("%d files found in .", len(files))
+
+    ss = _SubstString()
+    ss.prep_input(fn_in)
+    cmds = _OutFile()
+
+    matched = 0
+    for fn in files:
+        LOG.debug("Filename: %s", fn)
+        if ss.match_input(fn):
+            fn_subst = ss.calc_output(fn_out)
+            LOG.info("%s --> %s", fn, fn_subst)
+            if not args.dry:
+                cmds.rename(fn, fn_subst)
+            matched += 1
+
+    if not args.dry:
+        cmds.write(outfile)
+        LOG.info("Wrote commands to %s", outfile)
+    else:
+        print(f"{matched} files matched.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# format-cpp (uncrust logic)
+# ---------------------------------------------------------------------------
+
+_CPP_EXTENSIONS = ("h", "hpp", "inl", "cpp")
+
+
+def _default_uncrust_cfg():
+    bc_dir = os.environ.get("BC_INSTALL_DIR") or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(bc_dir, "source_code", "allman.uncrust.cfg")
+
+
+def _resolve_uncrust_cfg(cli_cfg):
+    if cli_cfg:
+        return cli_cfg
+    bcfg = load_bcconfig()
+    if bcfg.has_section("files"):
+        val = bcfg.get("files", "uncrustify_config", fallback="").strip()
+        if val:
+            return os.path.expanduser(val)
+    return _default_uncrust_cfg()
+
+
+def _uncrust_file(uncrustify, cfg, path):
+    print(f"Formatting {path}")
+    tmp = path + ".uncrust.tmp"
+    result = subprocess.run(
+        [uncrustify, "-f", path, "-l", "cpp", "-c", cfg, "-o", tmp],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(result.stderr.strip(), file=sys.stderr)
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return False
+    os.replace(tmp, path)
+    return True
+
+
+def _collect_sources(directory):
+    paths = []
+    for ext in _CPP_EXTENSIONS:
+        for p in glob.glob(os.path.join(directory, "**", f"*.{ext}"), recursive=True):
+            paths.append(p)
+    return sorted(paths)
+
+
+def cmd_format_cpp(args):
+    uncrustify = shutil.which("uncrustify")
+    if not uncrustify:
+        print("error: uncrustify not found on PATH. Install via: brew install uncrustify",
+              file=sys.stderr)
+        return 2
+
+    cfg = _resolve_uncrust_cfg(args.config)
+    if not os.path.isfile(cfg):
+        print(f"error: Uncrustify config not found: {cfg}", file=sys.stderr)
+        return 2
+
+    target = args.path
+    if os.path.isdir(target):
+        sources = _collect_sources(target)
+        if not sources:
+            print(f"No C/C++ source files found under {target}")
+            return 0
+        errors = 0
+        for path in sources:
+            if not _uncrust_file(uncrustify, cfg, path):
+                errors += 1
+        print(f"Formatted {len(sources) - errors}/{len(sources)} files.")
+        return 1 if errors else 0
+    elif os.path.isfile(target):
+        return 0 if _uncrust_file(uncrustify, cfg, target) else 1
+    else:
+        print(f"error: path does not exist: {target}", file=sys.stderr)
+        return 2
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="files",
+        description="File operation helpers.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subs = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND")
+
+    p = subs.add_parser("rename", help="batch-rename files using a regex pattern")
+    p.add_argument("input", help="input regex with capture groups")
+    p.add_argument("output", help="output template using ${N} capture group substitution")
+    p.add_argument("-d", "--dry", action="store_true",
+                   help="dry run: show matches without writing rename script")
+    p.add_argument("-v", "--verbose", action="store_true", help="verbose output")
+    p.add_argument("-o", "--outfile", default="rename.sh",
+                   help="name of the shell script to write (default: rename.sh)")
+    p.set_defaults(handler=cmd_rename)
+
+    p = subs.add_parser("format-cpp",
+                        help="reformat C/C++ files with the bundled Uncrustify config")
+    p.add_argument("path", help="source file or directory to reformat")
+    p.add_argument("--config", help="Uncrustify config file (overrides .bcconfig and bundled default)")
+    p.set_defaults(handler=cmd_format_cpp)
+
+    return parser
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv == ["--bc-metadata"]:
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return 0
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    return handler(args) or 0
+
+
 if __name__ == "__main__":
-    sys.exit(run_group("files", SUMMARY, ROUTES))
+    sys.exit(main())

@@ -1,72 +1,379 @@
 #!/usr/bin/env python3
-"""project - project setup and build helpers."""
-# Supports --bc-metadata discovery.
+"""
+project - project setup and build helpers.
 
+Subcommands:
+  git-init                         initialise a Git repo with standard
+                                   .gitattributes and .gitignore
+  unity-init                       scaffold a Unity project directory and
+                                   .gitignore
+  shell-script NAME                create a new Bash script from a starter
+                                   template
+  cmake [-r] [-o] [CMAKE_ARGS...]  configure or update a CMake build directory
+  cmake-dir BUILD_DIR GENERATOR    create an out-of-source CMake build directory
+
+Run `project <subcommand> -h` for per-command help.
+"""
+
+import argparse
+import json
+import os
+import subprocess
 import sys
 
-from lib.bc_group import passthrough_arg, run_group
+# ---------------------------------------------------------------------------
+# Metadata
+# ---------------------------------------------------------------------------
+
+def bc_metadata():
+    return {
+        "schema_version": 1,
+        "name": "project",
+        "summary": "Project setup and build helpers",
+        "command_style": "subcommands",
+        "config_sections": {},
+        "subcommands": [
+            {
+                "name": "git-init",
+                "summary": "Initialise a Git repository with bash_common defaults",
+                "safety": "write",
+                "args": [],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "unity-init",
+                "summary": "Scaffold a Unity project directory and .gitignore",
+                "safety": "write",
+                "args": [],
+                "options": [],
+                "artifacts": [],
+            },
+            {
+                "name": "shell-script",
+                "summary": "Create a new Bash script from a starter template",
+                "safety": "write",
+                "args": [
+                    {"name": "name", "label": "Script filename", "kind": "path",
+                     "required": True},
+                ],
+                "options": [],
+                "artifacts": [
+                    {"kind": "shell", "path_arg": "name"},
+                ],
+            },
+            {
+                "name": "cmake",
+                "summary": "Configure or update a CMake build directory",
+                "safety": "write",
+                "args": [
+                    {"name": "cmake_args", "label": "Extra cmake arguments",
+                     "kind": "path-list", "required": False},
+                ],
+                "options": [
+                    {"name": "reset", "flag": "--reset", "short_flag": "-r",
+                     "kind": "boolean", "label": "Wipe and re-configure the build directory"},
+                    {"name": "open", "flag": "--open", "short_flag": "-o",
+                     "kind": "boolean", "label": "Open project file after configuring"},
+                ],
+                "artifacts": [],
+            },
+            {
+                "name": "cmake-dir",
+                "summary": "Create an out-of-source CMake build directory",
+                "safety": "write",
+                "args": [
+                    {"name": "build_dir", "label": "Build directory name", "kind": "string",
+                     "required": True},
+                    {"name": "generator", "label": "CMake generator (e.g. Ninja, Xcode)",
+                     "kind": "string", "required": True},
+                ],
+                "options": [],
+                "artifacts": [],
+            },
+        ],
+    }
 
 
-SUMMARY = "project setup and build helpers"
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-ROUTES = {
-    "git-init": {
-        "target": "newgit",
-        "metadata": {
-            "name": "git-init",
-            "summary": "Initialise a Git repository with bash_common defaults",
-            "safety": "write",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "unity-init": {
-        "target": "newunity",
-        "metadata": {
-            "name": "unity-init",
-            "summary": "Scaffold a Unity project directory",
-            "safety": "write",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "shell-script": {
-        "target": "newsh",
-        "metadata": {
-            "name": "shell-script",
-            "summary": "Create a new Bash script from a starter template",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Filename and options")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "cmake": {
-        "target": "cm",
-        "metadata": {
-            "name": "cmake",
-            "summary": "Configure or update a CMake build directory",
-            "safety": "write",
-            "args": [passthrough_arg()],
-            "options": [],
-            "artifacts": [],
-        },
-    },
-    "cmake-dir": {
-        "target": "cmdir",
-        "metadata": {
-            "name": "cmake-dir",
-            "summary": "Create a CMake build directory with a selected generator",
-            "safety": "write",
-            "args": [passthrough_arg("args", "Build dir and generator")],
-            "options": [],
-            "artifacts": [],
-        },
-    },
+def _run(argv, **kwargs):
+    return subprocess.run(argv, **kwargs).returncode
+
+
+def _write_file(path, content):
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(content)
+
+
+# ---------------------------------------------------------------------------
+# git-init
+# ---------------------------------------------------------------------------
+
+_GITATTRIBUTES = "* text=auto\n"
+
+_GITIGNORE = """\
+build*/
+
+*.py[cod]
+__pycache__/
+"""
+
+
+def cmd_git_init(args):
+    added = False
+    if not os.path.isdir(".git"):
+        _run(["git", "init"])
+
+    if not os.path.isfile(".gitattributes"):
+        _write_file(".gitattributes", _GITATTRIBUTES)
+        _run(["git", "add", ".gitattributes"])
+        added = True
+
+    if not os.path.isfile(".gitignore"):
+        _write_file(".gitignore", _GITIGNORE)
+        _run(["git", "add", ".gitignore"])
+        added = True
+
+    if added:
+        _run(["git", "commit", "-m", "Add git config"])
+        _run(["git", "log"])
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# unity-init
+# ---------------------------------------------------------------------------
+
+_UNITY_GITIGNORE = """\
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Bb]uilds/
+/Assets/AssetStoreTools*
+
+ExportedObj/
+.consulo/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pidb.meta
+sysinfo.txt
+*.apk
+*.unitypackage
+"""
+
+_UNITY_DIRS = [
+    "Assets/Audio",
+    "Assets/Models",
+    "Assets/Models/Materials",
+    "Assets/Models/Textures",
+    "Assets/Prefabs",
+    "Assets/Scenes",
+    "Assets/Scripts",
+]
+
+
+def cmd_unity_init(args):
+    if not os.path.isdir(".git"):
+        _run(["git", "init"])
+
+    if not os.path.isfile(".gitignore"):
+        _write_file(".gitignore", _UNITY_GITIGNORE)
+        _run(["git", "add", ".gitignore"])
+
+    for d in _UNITY_DIRS:
+        if not os.path.isdir(d):
+            os.makedirs(d, exist_ok=True)
+            print(f"Created {d}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# shell-script
+# ---------------------------------------------------------------------------
+
+_SHELL_TEMPLATE = """\
+#!/usr/bin/env bash
+
+SCRIPTPATH=$( cd $(dirname $0) ; pwd -P )
+
+FILE=$1
+OUT=${FILE%.*}_.mp4
+
+usage() {
+  echo "Usage: $0 [-i] [-c] VIDEO"
 }
+
+# getopt "x" no-arg, "x:" required arg, "x::" optional arg
+while getopts "ic" OPT; do
+  case "${OPT}" in
+    i)
+      echo "$FILE"
+      shift
+      ;;
+    c)
+      blah
+      shift
+      ;;
+    *) usage ;;
+  esac
+done
+
+shift "$((OPTIND-1))"
+
+ARGS=$@
+"""
+
+
+def cmd_shell_script(args):
+    fname = args.name
+    if os.path.exists(fname):
+        print(f"error: file already exists: {fname}", file=sys.stderr)
+        return 1
+    _write_file(fname, _SHELL_TEMPLATE)
+    os.chmod(fname, os.stat(fname).st_mode | 0o100)
+    print(f"Created {fname}")
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# cmake
+# ---------------------------------------------------------------------------
+
+def cmd_cmake(args):
+    build_dir = "build"
+    original_dir = os.getcwd()
+
+    if os.path.isfile("CMakeCache.txt"):
+        build_dir = os.path.basename(original_dir)
+        os.chdir("..")
+    elif not os.path.isfile("CMakeLists.txt"):
+        print("error: no CMakeLists.txt found. Are you in a cmake project?",
+              file=sys.stderr)
+        return 1
+    else:
+        os.makedirs(build_dir, exist_ok=True)
+
+    print(f"Build dir: {build_dir}")
+
+    if args.reset:
+        import shutil as _shutil
+        print("Resetting build dir...")
+        for item in os.listdir(build_dir):
+            p = os.path.join(build_dir, item)
+            if os.path.isdir(p):
+                _shutil.rmtree(p)
+            else:
+                os.remove(p)
+
+    os.chdir(build_dir)
+    cmake_argv = ["cmake"] + args.cmake_args + [".."]
+    rc = _run(cmake_argv)
+    os.chdir(original_dir)
+
+    if args.open and rc == 0:
+        _open_project(os.path.join(original_dir, build_dir))
+
+    return rc
+
+
+def _open_project(build_path):
+    makefile = os.path.join(build_path, "Makefile")
+    if os.path.isfile(makefile):
+        subprocess.run(["open", makefile])
+        return
+    for item in os.listdir(build_path):
+        if item.endswith(".xcodeproj"):
+            subprocess.run(["open", os.path.join(build_path, item)])
+            return
+
+
+# ---------------------------------------------------------------------------
+# cmake-dir
+# ---------------------------------------------------------------------------
+
+def cmd_cmake_dir(args):
+    d = args.build_dir
+    if os.path.isdir(d):
+        print(f"error: directory already exists: {d}", file=sys.stderr)
+        return 1
+    os.makedirs(d)
+    rc = subprocess.run(["cmake", "-G", args.generator, ".."], cwd=d).returncode
+    return rc
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _build_parser():
+    parser = argparse.ArgumentParser(
+        prog="project",
+        description="Project setup and build helpers.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subs = parser.add_subparsers(dest="subcommand", metavar="SUBCOMMAND")
+
+    p = subs.add_parser("git-init",
+                         help="initialise a Git repo with standard .gitattributes and .gitignore")
+    p.set_defaults(handler=cmd_git_init)
+
+    p = subs.add_parser("unity-init",
+                         help="scaffold a Unity project directory and .gitignore")
+    p.set_defaults(handler=cmd_unity_init)
+
+    p = subs.add_parser("shell-script",
+                         help="create a new Bash script from a starter template")
+    p.add_argument("name", help="filename for the new script")
+    p.set_defaults(handler=cmd_shell_script)
+
+    p = subs.add_parser("cmake",
+                         help="configure or update a CMake build directory")
+    p.add_argument("-r", "--reset", action="store_true",
+                   help="wipe the build directory before configuring")
+    p.add_argument("-o", "--open", action="store_true",
+                   help="open project file after configuring")
+    p.add_argument("cmake_args", nargs=argparse.REMAINDER,
+                   help="extra arguments forwarded to cmake")
+    p.set_defaults(handler=cmd_cmake)
+
+    p = subs.add_parser("cmake-dir",
+                         help="create an out-of-source CMake build directory")
+    p.add_argument("build_dir", help="directory name to create")
+    p.add_argument("generator", help="CMake generator (e.g. Ninja, Xcode, \"Unix Makefiles\")")
+    p.set_defaults(handler=cmd_cmake_dir)
+
+    return parser
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+
+    if argv == ["--bc-metadata"]:
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return 0
+
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    handler = getattr(args, "handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    return handler(args) or 0
 
 
 if __name__ == "__main__":
-    sys.exit(run_group("project", SUMMARY, ROUTES))
+    sys.exit(main())

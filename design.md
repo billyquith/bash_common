@@ -87,25 +87,19 @@ owned by `video` until another command genuinely needs the same behaviour.
 
 ## Grouped Commands
 
-Existing standalone tools are being moved behind grouped command entry points.
-The old commands remain as compatibility wrappers and direct CLI tools. The new
-groups are metadata-backed, discoverable by `bcui`, and currently delegate to
-the existing implementations:
+All grouped commands are first-class Python commands following the same
+architecture: inline argparse handlers, `bc_metadata()` for discovery, and
+`.bcconfig` integration for user-configurable defaults.
 
-| Group | Purpose |
-|-------|---------|
-| `bashcommon` | self-management: `init`, `update`, `config`, `ui`, `doctor`, `list` |
-| `project` | project setup/build helpers: `git-init`, `unity-init`, `shell-script`, `cmake`, `cmake-dir` |
-| `files` | file operations: `rename`, `format-cpp` |
-| `android` | Unity/ADB workflows: `install`, `run`, `uninstall`, `log`, `list`, `dump`, `activity`, `devices`, `adb`, `config` (first-class Python command; reads `[android]` from `.bcconfig` with legacy `.uadb` fallback) |
-| `blender` | Blender launch and Python helpers |
-| `docs` | cheat sheets and Markdown processing |
-| `safari` | Safari/macOS browser data helpers |
-
-These grouped commands are a migration layer, not the final implementation for
-every domain. As commands are rewritten in Python, logic can move from the old
-standalone scripts into the grouped command while preserving the old entry point
-as a thin compatibility wrapper.
+| Group | Subcommands | Config section |
+|-------|-------------|----------------|
+| `bashcommon` | `init`, `update`, `config`, `ui`, `doctor`, `list` | — |
+| `project` | `git-init`, `unity-init`, `shell-script`, `cmake`, `cmake-dir` | — |
+| `files` | `rename`, `format-cpp` | `[files]` |
+| `android` | `install`, `uninstall`, `run`, `log`, `list`, `dump`, `activity`, `devices`, `adb`, `config` | `[android]` |
+| `blender` | `launch`, `python`, `config` | `[blender]` |
+| `docs` | `cheat`, `markdown` | `[docs]` |
+| `safari` | `cookies` | `[safari]` |
 
 ## BC UI
 
@@ -410,29 +404,17 @@ it proves useful.
 
 ## Migration Plan
 
-1. Add metadata support to `video`. Done for the prototype.
-2. Add shared Python helpers in `lib/`. Done for the prototype.
-3. Add `bcui` with Flask, command discovery, config display, and job execution.
-   Done for the prototype.
-4. Build generated UI forms for metadata-backed commands. Done for the prototype.
-5. Add typed command input limited to discovered metadata. Done for the prototype.
-6. Update `bcconfig` to consume command metadata for config defaults. Done for
-   the prototype.
-7. Add grouped command entry points for standalone commands. Done as delegating
-   wrappers for the prototype.
-8. Gradually move command logic into grouped Python commands where that improves
-   maintainability, while preserving the old entry points.
-
-Candidate migrations:
-
-| Current | Future |
-|---------|--------|
-| `newgit` | `project new-git` |
-| `newunity` | `project new-unity` |
-| `newsh` | `project new-shell` |
-| `mrename` | `files rename` |
-| `uncrust` | `files format-cpp` |
-| `uadb` | `android install`, `android run`, `android log`, … (done; uadb kept as compat) |
+1. Add metadata support to `video`. Done.
+2. Add shared Python helpers in `lib/`. Done.
+3. Add `bcui` with Flask, command discovery, config display, and job execution. Done.
+4. Build generated UI forms for metadata-backed commands. Done.
+5. Add typed command input limited to discovered metadata. Done.
+6. Update `bcconfig` to consume command metadata for config defaults. Done.
+7. Add grouped command entry points for standalone commands. Done.
+8. Rewrite grouped commands as first-class Python commands with inline logic,
+   real argparse, `bc_metadata()`, and `.bcconfig` integration. Done.
+   Legacy standalone scripts removed; the grouped commands are the sole entry
+   points.
 
 ## Testing Direction
 
