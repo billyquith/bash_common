@@ -62,13 +62,19 @@ check_sys() {
     fi
 }
 
+_venv_ok() {
+    # Returns true only if the venv Python is a real, working executable.
+    # Catches dead symlinks, wrong-Python rebuilds, and missing interpreters.
+    [ -x "$BC_VENV_PY" ] && "$BC_VENV_PY" -c "import sys; sys.exit(0)" 2>/dev/null
+}
+
 check_venv_py() {
     local pkg=$1
     local import_name=${2:-$1}
-    if [ -x "$BC_VENV_PY" ] && "$BC_VENV_PY" -c "import $import_name" 2>/dev/null; then
-        colecho -green "  [ok] " -normal "bcui venv: $pkg"
+    if _venv_ok && "$BC_VENV_PY" -c "import $import_name" 2>/dev/null; then
+        colecho -green "  [ok] " -normal "venv: $pkg"
     else
-        colecho -red "  [missing] " -normal "bcui venv: $pkg"
+        colecho -red "  [missing] " -normal "venv: $pkg"
         MISSING_VENV_PY+=("$pkg")
     fi
 }
@@ -132,8 +138,14 @@ fi
 # if ffmpeg is missing, ffprobe will be absent too and is fixed by installing ffmpeg
 
 echo ""
-colecho -white "Python packages:"
+colecho -white "Python packages (venv: $BC_VENV):"
 if command_exists python3; then
+    if _venv_ok; then
+        colecho -green "  [ok] " -normal "venv interpreter: $($BC_VENV_PY --version 2>&1)"
+    else
+        colecho -red "  [broken] " -normal "venv interpreter — will be recreated"
+        MISSING_VENV_PY+=("__venv__")
+    fi
     check_venv_py markdown2
     check_venv_py Flask flask
 else
@@ -243,14 +255,31 @@ fi
 
 if [ ${#MISSING_VENV_PY[@]} -gt 0 ]; then
     echo ""
-    colecho -white "Installing bash_common Python packages: ${MISSING_VENV_PY[*]}"
-    if [ ! -x "$BC_VENV_PY" ]; then
+    colecho -white "Setting up Python virtual environment..."
+
+    if [ -d "$BC_VENV" ] && ! _venv_ok; then
+        colecho -ye "  [stale] " -normal "Removing broken venv and recreating with $(python3 --version 2>&1)..."
+        rm -rf "$BC_VENV"
+    fi
+
+    if [ ! -d "$BC_VENV" ]; then
+        colecho -white "  Creating venv at $BC_VENV using $(python3 --version 2>&1)..."
         python3 -m venv "$BC_VENV"
     fi
+
+    # Remove the internal sentinel used for the broken-venv case
+    local real_pkgs=()
+    for pkg in "${MISSING_VENV_PY[@]}"; do
+        [ "$pkg" != "__venv__" ] && real_pkgs+=("$pkg")
+    done
+
+    "$BC_VENV_PY" -m pip install --quiet --upgrade pip
     if [ -f "$BC_REQUIREMENTS" ]; then
+        colecho -white "  Installing from requirements.txt..."
         "$BC_VENV_PY" -m pip install -r "$BC_REQUIREMENTS"
-    else
-        "$BC_VENV_PY" -m pip install "${MISSING_VENV_PY[@]}"
+    elif [ ${#real_pkgs[@]} -gt 0 ]; then
+        colecho -white "  Installing packages: ${real_pkgs[*]}"
+        "$BC_VENV_PY" -m pip install "${real_pkgs[@]}"
     fi
 fi
 
