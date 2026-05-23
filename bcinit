@@ -3,7 +3,7 @@
 #
 # Run once after cloning (and again after updates) to check and install
 # everything bash_common needs: system tools (ffmpeg, ffprobe, mediainfo,
-# wget, python3), Python packages (markdown2), bundled completion scripts
+# wget, python3), Python packages in the local .venv, bundled completion scripts
 # (git, brew, etc.), shell config in ~/.bash_profile / ~/.bashrc, and
 # user config file ~/.bcconfig.
 #
@@ -43,7 +43,6 @@ esac
 # ---------------------------------------------------------------------------
 
 MISSING_SYS=()
-MISSING_PY=()
 MISSING_VENV_PY=()
 SHELL_CONFIG_WARNINGS=()
 MISSING_CFG=0
@@ -51,6 +50,7 @@ BCCFG="$HOME/.bccfg"
 BCCONFIG="$HOME/.bcconfig"
 BC_VENV="$SCRIPTPATH/.venv"
 BC_VENV_PY="$BC_VENV/bin/python"
+BC_REQUIREMENTS="$SCRIPTPATH/requirements.txt"
 
 check_sys() {
     local cmd=$1
@@ -59,17 +59,6 @@ check_sys() {
     else
         colecho -red "  [missing] " -normal "$cmd"
         MISSING_SYS+=("$cmd")
-    fi
-}
-
-check_py() {
-    local pkg=$1
-    local import_name=${2:-$1}
-    if python3 -c "import $import_name" 2>/dev/null; then
-        colecho -green "  [ok] " -normal "python: $pkg"
-    else
-        colecho -red "  [missing] " -normal "python: $pkg"
-        MISSING_PY+=("$pkg")
     fi
 }
 
@@ -145,7 +134,7 @@ fi
 echo ""
 colecho -white "Python packages:"
 if command_exists python3; then
-    check_py markdown2
+    check_venv_py markdown2
     check_venv_py Flask flask
 else
     colecho -ye "  (skipping Python package checks: python3 not found)"
@@ -213,14 +202,14 @@ fi
 # Install
 # ---------------------------------------------------------------------------
 
-if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ] && [ ${#MISSING_VENV_PY[@]} -eq 0 ] && [ ${#SHELL_CONFIG_WARNINGS[@]} -eq 0 ] && [ "$MISSING_CFG" -eq 0 ]; then
+if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_VENV_PY[@]} -eq 0 ] && [ ${#SHELL_CONFIG_WARNINGS[@]} -eq 0 ] && [ "$MISSING_CFG" -eq 0 ]; then
     echo ""
     colecho -green "All dependencies satisfied and shell config looks good."
     exit 0
 fi
 
 # Shell config warnings are always informational — they never block the dep install
-if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_PY[@]} -eq 0 ] && [ ${#MISSING_VENV_PY[@]} -eq 0 ] && [ "$MISSING_CFG" -eq 0 ]; then
+if [ ${#MISSING_SYS[@]} -eq 0 ] && [ ${#MISSING_VENV_PY[@]} -eq 0 ] && [ "$MISSING_CFG" -eq 0 ]; then
     echo ""
     colecho -green "All dependencies satisfied."
     colecho -ye "Review shell config warnings above."
@@ -252,19 +241,17 @@ if [ ${#MISSING_SYS[@]} -gt 0 ]; then
     esac
 fi
 
-if [ ${#MISSING_PY[@]} -gt 0 ]; then
-    echo ""
-    colecho -white "Installing Python packages: ${MISSING_PY[*]}"
-    python3 -m pip install "${MISSING_PY[@]}"
-fi
-
 if [ ${#MISSING_VENV_PY[@]} -gt 0 ]; then
     echo ""
-    colecho -white "Installing bcui Python packages: ${MISSING_VENV_PY[*]}"
+    colecho -white "Installing bash_common Python packages: ${MISSING_VENV_PY[*]}"
     if [ ! -x "$BC_VENV_PY" ]; then
         python3 -m venv "$BC_VENV"
     fi
-    "$BC_VENV_PY" -m pip install "${MISSING_VENV_PY[@]}"
+    if [ -f "$BC_REQUIREMENTS" ]; then
+        "$BC_VENV_PY" -m pip install -r "$BC_REQUIREMENTS"
+    else
+        "$BC_VENV_PY" -m pip install "${MISSING_VENV_PY[@]}"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

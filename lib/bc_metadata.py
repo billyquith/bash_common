@@ -52,11 +52,12 @@ def has_metadata_marker(path):
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return "--bc-metadata" in text or "bc_metadata" in text
+    return "--bc-metadata" in text or "def bc_metadata" in text
 
 
-def discover_commands(bc_dir, timeout=3):
+def inspect_commands(bc_dir, timeout=3):
     commands = []
+    diagnostics = []
     bc_dir = Path(bc_dir)
     env = command_env(bc_dir)
     for path in candidate_paths(bc_dir):
@@ -71,20 +72,52 @@ def discover_commands(bc_dir, timeout=3):
                 capture_output=True,
                 timeout=timeout,
             )
-        except Exception:
+        except subprocess.TimeoutExpired:
+            diagnostics.append({
+                "path": str(path),
+                "status": "timeout",
+                "message": f"metadata command exceeded {timeout}s",
+            })
+            continue
+        except Exception as exc:
+            diagnostics.append({
+                "path": str(path),
+                "status": "error",
+                "message": str(exc),
+            })
             continue
         if proc.returncode != 0:
+            diagnostics.append({
+                "path": str(path),
+                "status": "failed",
+                "returncode": proc.returncode,
+                "stderr": proc.stderr.strip(),
+            })
             continue
         try:
             metadata = json.loads(proc.stdout)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            diagnostics.append({
+                "path": str(path),
+                "status": "invalid-json",
+                "message": str(exc),
+            })
             continue
         if not isinstance(metadata, dict) or not metadata.get("name"):
+            diagnostics.append({
+                "path": str(path),
+                "status": "invalid-schema",
+                "message": "metadata must be an object with a non-empty name",
+            })
             continue
         metadata["_path"] = str(path)
         commands.append(metadata)
     commands.sort(key=lambda item: item["name"])
-    return commands
+    return {"commands": commands, "diagnostics": diagnostics}
+
+
+def discover_commands(bc_dir, timeout=3):
+    return inspect_commands(bc_dir, timeout=timeout)["commands"]
 
 
 def public_commands(commands):

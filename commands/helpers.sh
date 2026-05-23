@@ -3,9 +3,8 @@
 #   - TMPFILE=/tmp/data$(tmpfile)
 function tmpfile
 {
-    echo $(mktemp XXXXXXXX.tmp)
+    mktemp XXXXXXXX.tmp
 }
-export -f tmpfile
 
 # Convert a number to human readable
 function b2h {
@@ -17,7 +16,6 @@ function b2h {
     done
     echo "$b$d ${S[$s]}"
 }
-export -f b2h
 
 # Output disk usage in useful format
 function duh {    
@@ -38,9 +36,8 @@ fi
 # > if command_exists touch; then ... fi
 function command_exists
 {
-    [ -x "$(command -v $1)" ]   # returns true/false
+    [ -x "$(command -v "$1")" ]   # returns true/false
 }
-export -f command_exists
 
 # colour echo output: colecho -red "red" -green "green"
 function colecho ()
@@ -95,4 +92,3 @@ function colecho ()
 	done
 	echo -e "\e[0m"
 }
-export -f colecho

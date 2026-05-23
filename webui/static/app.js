@@ -3,6 +3,8 @@ const state = {
   selectedCommand: null,
   selectedSubcommand: null,
   configValues: {},
+  activeJobId: null,
+  pollTimer: null,
 };
 
 const el = (id) => document.getElementById(id);
@@ -172,9 +174,12 @@ function formValues(prefix) {
 }
 
 function showJob(job) {
-  el("job-meta").textContent = `${job.argv.join(" ")} | exit ${job.returncode} | ${job.elapsed.toFixed(2)}s`;
+  const elapsed = Number(job.elapsed || 0).toFixed(2);
+  const code = job.returncode === null || job.returncode === undefined ? "-" : job.returncode;
+  el("job-meta").textContent = `${job.argv.join(" ")} | ${job.status} | exit ${code} | ${elapsed}s`;
   el("stdout").textContent = job.stdout || "";
   el("stderr").textContent = job.stderr || "";
+  el("cancel-job").hidden = job.status !== "running" && job.status !== "cancelling";
 
   const artifacts = el("artifacts");
   artifacts.innerHTML = "";
@@ -194,6 +199,31 @@ function showJob(job) {
       item.appendChild(image);
     }
     artifacts.appendChild(item);
+  }
+}
+
+function stopPolling() {
+  if (state.pollTimer) {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+async function pollJob(jobId) {
+  const response = await fetch(`/api/jobs/${jobId}`);
+  const data = await response.json();
+  if (!response.ok) {
+    el("job-meta").textContent = "Error";
+    el("stderr").textContent = data.error || "Unable to load job.";
+    stopPolling();
+    return;
+  }
+  showJob(data.job);
+  if (data.job.status === "running" || data.job.status === "cancelling") {
+    state.pollTimer = setTimeout(() => pollJob(jobId), 750);
+  } else {
+    state.activeJobId = null;
+    stopPolling();
   }
 }
 
@@ -222,7 +252,8 @@ async function runRaw(event) {
 }
 
 async function runRequest(payload) {
-  el("job-meta").textContent = "Running...";
+  stopPolling();
+  el("job-meta").textContent = "Starting...";
   el("stdout").textContent = "";
   el("stderr").textContent = "";
   el("artifacts").innerHTML = "";
@@ -235,9 +266,21 @@ async function runRequest(payload) {
   if (!response.ok) {
     el("job-meta").textContent = "Error";
     el("stderr").textContent = data.error || "Command failed before execution.";
+    el("cancel-job").hidden = true;
     return;
   }
+  state.activeJobId = data.job.id;
   showJob(data.job);
+  await pollJob(data.job.id);
+}
+
+async function cancelActiveJob() {
+  if (!state.activeJobId) return;
+  const response = await fetch(`/api/jobs/${state.activeJobId}/cancel`, {method: "POST"});
+  const data = await response.json();
+  if (response.ok) {
+    showJob(data.job);
+  }
 }
 
 el("subcommand-select").addEventListener("change", (event) => {
@@ -250,6 +293,7 @@ el("subcommand-select").addEventListener("change", (event) => {
 
 el("command-form").addEventListener("submit", runStructured);
 el("raw-form").addEventListener("submit", runRaw);
+el("cancel-job").addEventListener("click", cancelActiveJob);
 el("cwd-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   await loadState();

@@ -118,6 +118,16 @@ button.primary:hover,
   background: var(--accent-dark);
 }
 
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+button.danger:hover {
+  background: var(--danger);
+  color: #ffffff;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);

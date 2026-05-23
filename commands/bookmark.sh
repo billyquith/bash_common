@@ -38,7 +38,14 @@
 if [ ! -n "$SDIRS" ]; then
     SDIRS=~/.sdirs
 fi
-touch $SDIRS
+
+function _bookmark_file_exists {
+    [ -f "$SDIRS" ]
+}
+
+function _bookmark_file_ensure {
+    touch "$SDIRS"
+}
 
 RED="0;31m"
 GREEN="0;33m"
@@ -48,6 +55,7 @@ function bs {
     check_help $1
     _bookmark_name_valid "$@"
     if [ -z "$exit_message" ]; then
+        _bookmark_file_ensure
         _purge_line "$SDIRS" "export DIR_$1="
         CURDIR=$(echo $PWD| sed "s#^$HOME#\$HOME#g")
         echo "export DIR_$1=\"$CURDIR\"" >> $SDIRS
@@ -57,7 +65,9 @@ function bs {
 # jump to bookmark
 function g {
     check_help $1
-    source $SDIRS
+    if _bookmark_file_exists; then
+        source "$SDIRS"
+    fi
     target="$(eval $(echo echo $(echo \$DIR_$1)))"
     if [ -d "$target" ]; then
         cd "$target"
@@ -71,7 +81,9 @@ function g {
 # print bookmark
 function bp {
     check_help $1
-    source $SDIRS
+    if _bookmark_file_exists; then
+        source "$SDIRS"
+    fi
     echo "$(eval $(echo echo $(echo \$DIR_$1)))"
 }
 
@@ -80,6 +92,7 @@ function bd {
     check_help $1
     _bookmark_name_valid "$@"
     if [ -z "$exit_message" ]; then
+        _bookmark_file_ensure
         _purge_line "$SDIRS" "export DIR_$1="
         unset "DIR_$1"
     fi
@@ -101,7 +114,10 @@ function check_help {
 # list bookmarks with dirnam
 function bl {
     check_help $1
-    source $SDIRS
+    if ! _bookmark_file_exists; then
+        return 0
+    fi
+    source "$SDIRS"
         
     # if color output is not working for you, comment out the line below '\033[1;32m' == "red"
     env | sort | awk '/^DIR_.+/{split(substr($0,5),parts,"="); printf("\033[0;33m%-20s\033[0m %s\n", parts[1], parts[2]);}'
@@ -111,7 +127,10 @@ function bl {
 }
 # list bookmarks without dirname
 function _l {
-    source $SDIRS
+    if ! _bookmark_file_exists; then
+        return 0
+    fi
+    source "$SDIRS"
     env | grep "^DIR_" | cut -c5- | sort | grep "^.*=" | cut -f1 -d "=" 
 }
 

@@ -4,6 +4,7 @@ import mimetypes
 import os
 import shlex
 import subprocess
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -15,6 +16,7 @@ from lib.bc_output import strip_ansi
 
 
 JOBS = []
+JOBS_LOCK = threading.Lock()
 MAX_JOBS = 50
 
 
@@ -196,12 +198,13 @@ def _collect_artifacts(cwd, subcommand, option_values):
 
 
 def _store_job(job):
-    JOBS.insert(0, job)
-    del JOBS[MAX_JOBS:]
+    with JOBS_LOCK:
+        JOBS.insert(0, job)
+        del JOBS[MAX_JOBS:]
 
 
 def _public_job(job):
-    public = dict(job)
+    public = {key: value for key, value in job.items() if not key.startswith("_")}
     public["artifacts"] = [
         {
             "name": artifact["name"],
@@ -213,6 +216,86 @@ def _public_job(job):
         for idx, artifact in enumerate(job.get("artifacts", []))
     ]
     return public
+
+
+def _find_job(job_id):
+    with JOBS_LOCK:
+        for job in JOBS:
+            if job["id"] == job_id:
+                return job
+    return None
+
+
+def _append_output(job, key, text):
+    if not text:
+        return
+    with JOBS_LOCK:
+        job[key] += strip_ansi(text)
+
+
+def _set_job(job, **values):
+    with JOBS_LOCK:
+        job.update(values)
+
+
+def _read_stream(job, pipe, key):
+    try:
+        for chunk in iter(pipe.readline, ""):
+            _append_output(job, key, chunk)
+    finally:
+        pipe.close()
+
+
+def _run_job(job, full_argv, cwd, env, subcommand, option_values, started):
+    try:
+        proc = subprocess.Popen(
+            full_argv,
+            cwd=cwd,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=1,
+        )
+        _set_job(job, pid=proc.pid, _process=proc)
+
+        stdout_thread = threading.Thread(
+            target=_read_stream,
+            args=(job, proc.stdout, "stdout"),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_read_stream,
+            args=(job, proc.stderr, "stderr"),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        returncode = proc.wait()
+        stdout_thread.join()
+        stderr_thread.join()
+
+        with JOBS_LOCK:
+            was_cancelling = job.get("status") == "cancelling"
+        status = "cancelled" if was_cancelling else "finished"
+        _set_job(
+            job,
+            status=status,
+            returncode=returncode,
+            elapsed=time.monotonic() - started,
+            artifacts=_collect_artifacts(cwd, subcommand, option_values),
+        )
+    except Exception as exc:
+        _append_output(job, "stderr", f"{exc}\n")
+        _set_job(
+            job,
+            status="error",
+            returncode=-1,
+            elapsed=time.monotonic() - started,
+        )
+    finally:
+        _set_job(job, _process=None)
 
 
 def create_app(bc_dir, default_cwd):
@@ -229,12 +312,14 @@ def create_app(bc_dir, default_cwd):
         try:
             cwd = _normalize_cwd(default_cwd)
             commands = discover_commands(bc_dir)
+            with JOBS_LOCK:
+                jobs = [_public_job(job) for job in JOBS]
             return jsonify({
                 "bc_dir": str(bc_dir),
                 "cwd": cwd,
                 "commands": public_commands(commands),
                 "config": _config_state(bc_dir, cwd, commands),
-                "jobs": [_public_job(job) for job in JOBS],
+                "jobs": jobs,
             })
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
@@ -254,41 +339,63 @@ def create_app(bc_dir, default_cwd):
                 command, subcommand, argv, option_values = _build_structured_argv(commands, data)
 
             full_argv = [command["_path"], *argv]
-            proc = subprocess.run(
-                full_argv,
-                cwd=cwd,
-                env=command_env(bc_dir),
-                text=True,
-                capture_output=True,
-            )
-            elapsed = time.monotonic() - started
             job = {
                 "id": uuid.uuid4().hex[:12],
+                "status": "running",
                 "command": command["name"],
                 "subcommand": subcommand["name"],
                 "argv": [command["name"], *argv],
                 "cwd": cwd,
-                "returncode": proc.returncode,
-                "stdout": strip_ansi(proc.stdout),
-                "stderr": strip_ansi(proc.stderr),
-                "elapsed": elapsed,
-                "artifacts": _collect_artifacts(cwd, subcommand, option_values),
+                "pid": None,
+                "returncode": None,
+                "stdout": "",
+                "stderr": "",
+                "elapsed": 0,
+                "artifacts": [],
+                "_process": None,
             }
             _store_job(job)
+            thread = threading.Thread(
+                target=_run_job,
+                args=(job, full_argv, cwd, command_env(bc_dir), subcommand, option_values, started),
+                daemon=True,
+            )
+            thread.start()
             return jsonify({"job": _public_job(job)})
         except Exception as exc:
             return jsonify({"error": str(exc)}), 400
 
+    @app.get("/api/jobs/<job_id>")
+    def job_status(job_id):
+        job = _find_job(job_id)
+        if not job:
+            return jsonify({"error": "Job not found."}), 404
+        with JOBS_LOCK:
+            return jsonify({"job": _public_job(job)})
+
+    @app.post("/api/jobs/<job_id>/cancel")
+    def cancel_job(job_id):
+        job = _find_job(job_id)
+        if not job:
+            return jsonify({"error": "Job not found."}), 404
+        with JOBS_LOCK:
+            proc = job.get("_process")
+            if job.get("status") != "running" or proc is None:
+                return jsonify({"job": _public_job(job)})
+            job["status"] = "cancelling"
+        proc.terminate()
+        with JOBS_LOCK:
+            return jsonify({"job": _public_job(job)})
+
     @app.get("/api/artifacts/<job_id>/<int:index>")
     def artifact(job_id, index):
-        for job in JOBS:
-            if job["id"] != job_id:
-                continue
-            artifacts = job.get("artifacts", [])
-            if index < 0 or index >= len(artifacts):
-                break
-            artifact = artifacts[index]
-            return send_file(artifact["path"], mimetype=artifact["mime"])
+        job = _find_job(job_id)
+        if job:
+            with JOBS_LOCK:
+                artifacts = list(job.get("artifacts", []))
+            if 0 <= index < len(artifacts):
+                artifact = artifacts[index]
+                return send_file(artifact["path"], mimetype=artifact["mime"])
         return jsonify({"error": "Artifact not found."}), 404
 
     return app

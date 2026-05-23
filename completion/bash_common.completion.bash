@@ -2,7 +2,32 @@
 
 __bc_meta_json() {
     local cmd="$1"
-    "$cmd" --bc-metadata 2>/dev/null
+    local resolved mtime key cache tmp
+
+    resolved="$(command -v "$cmd" 2>/dev/null)" || return 1
+    if mtime="$(stat -f %m "$resolved" 2>/dev/null)"; then
+        :
+    elif mtime="$(stat -c %Y "$resolved" 2>/dev/null)"; then
+        :
+    else
+        mtime="unknown"
+    fi
+
+    key="$(printf '%s_%s' "$(basename "$resolved")" "$mtime" | tr -c 'A-Za-z0-9_' '_')"
+    cache="${TMPDIR:-/tmp}/bash_common_meta_${USER:-user}_${key}.json"
+    if [ -s "$cache" ]; then
+        cat "$cache"
+        return 0
+    fi
+
+    tmp="${cache}.$$"
+    if "$resolved" --bc-metadata >"$tmp" 2>/dev/null; then
+        mv "$tmp" "$cache"
+        cat "$cache"
+    else
+        rm -f "$tmp"
+        return 1
+    fi
 }
 
 __bc_meta_query() {
@@ -135,7 +160,7 @@ __bc_register_metadata_completions() {
     for path in "$dir"/*; do
         [ -f "$path" ] || continue
         [ -x "$path" ] || continue
-        grep -q -- "--bc-metadata\|bc_metadata" "$path" 2>/dev/null || continue
+        grep -q -- "--bc-metadata\|def bc_metadata" "$path" 2>/dev/null || continue
         name="$(basename "$path")"
         complete -o default -F __bc_complete_metadata_command "$name"
     done

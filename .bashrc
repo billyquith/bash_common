@@ -10,6 +10,11 @@ if [ -z "$BC_INSTALL_DIR" ]; then
     exit 1
 fi
 
+case $- in
+    *i*) ;;
+    *) return 0 2>/dev/null || exit 0 ;;
+esac
+
 # Platform config
 case `uname -s` in
 CYGWIN*)
@@ -68,4 +73,6 @@ source $BC_INSTALL_DIR/completion/git.completion.bash
 
 export PS1="$(clr_escape_wrap '\w>' '36') "
 
-echo "$(clr_magenta "Welcome to") $(clr_escape bash_common $CLR_YELLOW $CLR_BOLD) 8D"
+if [ "${BC_QUIET:-0}" != "1" ]; then
+    echo "$(clr_magenta "Welcome to") $(clr_escape bash_common $CLR_YELLOW $CLR_BOLD) 8D"
+fi

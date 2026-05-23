@@ -61,6 +61,7 @@ adds `BC_INSTALL_DIR` to `PATH`:
 | `bcinit` | Check/install dependencies, shell setup, and user config. |
 | `bcconfig` | Show, query, and initialise `.bcconfig` settings. |
 | `bcui` | Start the local browser UI for metadata-backed commands. |
+| `bcdoctor` | Validate metadata-backed command discovery. |
 | `bashcommon` | Grouped bash_common self-management commands. |
 | `project` | Grouped project setup and build helpers. |
 | `files` | Grouped file operation helpers. |
@@ -111,8 +112,8 @@ bcui
 
 By default it binds to `127.0.0.1:8765`. The UI discovers commands that expose
 machine-readable metadata, shows their subcommands and options, runs them as
-structured argument lists, and displays stdout, stderr, exit status, and known
-artifacts.
+structured argument lists, runs jobs in the background, displays stdout, stderr,
+exit status, and known artifacts, and lets running jobs be cancelled.
 
 Useful options:
 
@@ -121,10 +122,11 @@ bcui --host 127.0.0.1
 bcui --port 8765
 bcui --cwd /path/to/project
 bcui --no-browser
+bcui --host 0.0.0.0 --allow-lan
 ```
 
-The first metadata-backed command is `video`. More commands can appear in the
-UI as they add metadata.
+By default `bcui` refuses non-localhost binds because it can execute local
+commands. Use `--allow-lan` only on a trusted network.
 
 Dependency: Flask, installed by `bcinit` into bash_common's local `.venv`.
 
@@ -140,6 +142,7 @@ to them:
 | `bashcommon update` | `bcup` |
 | `bashcommon config` | `bcconfig` |
 | `bashcommon ui` | `bcui` |
+| `bashcommon doctor` | `bcdoctor` |
 | `project git-init` | `newgit` |
 | `project unity-init` | `newunity` |
 | `project shell-script` | `newsh` |
@@ -165,7 +168,8 @@ to them:
 
 bash_common loads metadata-backed completion for commands that expose
 `--bc-metadata`. Completion covers subcommands, declared options, option choices,
-and path-like arguments.
+and path-like arguments. Metadata is cached by command file modification time,
+so completion stays responsive as more commands are added.
 
 Examples:
 
@@ -176,6 +180,18 @@ video convert --format <TAB>
 project <TAB>
 android <TAB>
 ```
+
+### Diagnostics
+
+Use `bashcommon doctor` to validate metadata-backed command discovery:
+
+```bash
+bashcommon doctor
+bashcommon doctor --json
+```
+
+This reports commands that publish invalid metadata, fail during metadata
+discovery, or time out.
 
 ### Platform-Specific Commands
 
@@ -314,8 +330,10 @@ cd
 git clone https://github.com/billyquith/bash_common.git .bash_common
 ```
 
-After cloning, run `bcinit` to check and install all dependencies (ffmpeg, python3,
-mediainfo, wget, and required Python packages):
+After cloning, run `bcinit` to check and install all dependencies. System tools
+such as ffmpeg, python3, mediainfo, and wget are installed through the platform
+package manager; Python packages from `requirements.txt` are installed into
+bash_common's local `.venv`.
 
 ```bash
 ~/.bash_common/bcinit

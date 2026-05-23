@@ -93,7 +93,7 @@ as a thin compatibility wrapper.
 ## BC UI
 
 `bcui` is the local web UI command. It starts a Flask server bound
-to localhost and provide an interactive browser interface for supported
+to localhost and provides an interactive browser interface for supported
 bash_common commands.
 
 Default behaviour:
@@ -114,14 +114,20 @@ bcui --host 127.0.0.1
 bcui --port 8765
 bcui --cwd /path/to/project
 bcui --no-browser
+bcui --host 0.0.0.0 --allow-lan
 ```
+
+Non-localhost binds require `--allow-lan` because the UI is a local command
+runner. It should only be exposed on a trusted network.
 
 The UI should support:
 
 - Browsing available command groups and subcommands.
 - Running structured command forms.
 - Typing a supported command line.
-- Seeing stdout, stderr, exit code, and runtime.
+- Starting commands as background jobs.
+- Polling live stdout, stderr, exit code, runtime, and job status.
+- Cancelling running jobs.
 - Viewing generated artifacts such as images, HTML reports, JSON, and logs.
 - Showing the effective `.bcconfig` for the selected working directory.
 
@@ -142,6 +148,12 @@ The scalable model is:
 Shared discovery mechanics live in `lib/bc_metadata.py`; the metadata itself
 still belongs to each command.
 
+Discovery has two modes:
+
+- normal discovery, which returns valid commands for tools such as `bcui`;
+- diagnostic discovery, which also returns invalid metadata, failed commands,
+  and timeouts for `bashcommon doctor`.
+
 ## Completion
 
 Bash completion is metadata-backed. `completion/bash_common.completion.bash`
@@ -157,6 +169,10 @@ This keeps completion aligned with the same command metadata used by `bcui` and
 `bcconfig`. Grouped passthrough commands complete their subcommands and then
 fall back to path completion for delegated arguments until those subcommands are
 rewritten with richer argument metadata.
+
+Completion caches each command's metadata by executable modification time. This
+keeps tab completion fast while still allowing command edits to invalidate the
+cache naturally.
 
 Recommended metadata entry point:
 
@@ -403,8 +419,8 @@ Candidate migrations:
 
 ## Testing Direction
 
-The repo currently has syntax and smoke-check style validation, but no formal
-test suite. As metadata and UI behaviour are added, tests should cover:
+The repo has a focused `unittest` suite under `tests/`. As metadata and UI
+behaviour are added, tests should cover:
 
 - Metadata JSON validity.
 - Command discovery.
@@ -413,3 +429,4 @@ test suite. As metadata and UI behaviour are added, tests should cover:
 - Rejection of unsupported typed commands.
 - Artifact detection.
 - Flask endpoint smoke tests.
+- Quiet shell startup in noninteractive shells.

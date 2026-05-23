@@ -54,6 +54,17 @@ ROUTES = {
             "artifacts": [],
         },
     },
+    "doctor": {
+        "target": "bcdoctor",
+        "metadata": {
+            "name": "doctor",
+            "summary": "Validate metadata-backed command discovery",
+            "safety": "read",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
 }
 
 

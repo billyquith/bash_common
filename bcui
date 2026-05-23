@@ -21,6 +21,8 @@ def main():
     )
     parser.add_argument("--host", default="127.0.0.1",
                         help="host to bind (default: 127.0.0.1)")
+    parser.add_argument("--allow-lan", action="store_true",
+                        help="allow binding to a non-localhost address")
     parser.add_argument("--port", default=8765, type=int,
                         help="port to bind (default: 8765)")
     parser.add_argument("--cwd", default=os.getcwd(),
@@ -30,19 +32,26 @@ def main():
     parser.add_argument("--debug", action="store_true",
                         help="run Flask in debug mode")
     args = parser.parse_args()
+    localhost_names = {"127.0.0.1", "localhost", "::1"}
+    if args.host not in localhost_names and not args.allow_lan:
+        print("Error: refusing to expose the command runner on a non-localhost address.")
+        print("Re-run with --allow-lan if you intentionally want LAN access.")
+        return 1
 
     try:
         from webui.app import create_app
     except ModuleNotFoundError as exc:
         if exc.name == "flask":
             print("Error: Flask is not installed. Run 'bcinit' to install dependencies.")
-            print("Or install manually with: python3 -m pip install Flask")
+            print("Or install manually with: .venv/bin/python -m pip install -r requirements.txt")
             return 1
         raise
 
     app = create_app(script_dir, os.path.abspath(args.cwd))
     url = f"http://{args.host}:{args.port}"
     print(f"BC UI running at {url}")
+    if args.host not in localhost_names:
+        print("Warning: BC UI can run local commands and is reachable from other machines.")
     print("Press Ctrl-C to stop.")
 
     if not args.no_browser:
