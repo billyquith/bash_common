@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""blender - Blender command helpers."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "Blender command helpers"
+
+ROUTES = {
+    "launch": {
+        "target": "blend",
+        "metadata": {
+            "name": "launch",
+            "summary": "Launch Blender using bookmarked directories",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Blender arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "python": {
+        "target": "blpy",
+        "metadata": {
+            "name": "python",
+            "summary": "Run Blender's bundled Python interpreter",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Python arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("blender", SUMMARY, ROUTES))

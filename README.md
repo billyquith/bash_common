@@ -20,6 +20,7 @@ towards game development. Features (non-exhaustive) include:
 - Platform-specific aliases and completions.
 - Hierarchical `.bcconfig` configuration.
 - `bcui`, a local browser UI for metadata-backed commands.
+- Metadata-backed Bash completion for grouped commands and `video`.
 
 Implementation and future architecture notes live in [design.md](design.md). This
 README is the user-facing reference for available features and commands.
@@ -60,6 +61,13 @@ adds `BC_INSTALL_DIR` to `PATH`:
 | `bcinit` | Check/install dependencies, shell setup, and user config. |
 | `bcconfig` | Show, query, and initialise `.bcconfig` settings. |
 | `bcui` | Start the local browser UI for metadata-backed commands. |
+| `bashcommon` | Grouped bash_common self-management commands. |
+| `project` | Grouped project setup and build helpers. |
+| `files` | Grouped file operation helpers. |
+| `android` | Grouped Android/ADB helpers. |
+| `blender` | Grouped Blender helpers. |
+| `docs` | Grouped documentation helpers. |
+| `safari` | Grouped Safari/macOS browser data helpers. |
 | `bcup` | Update bash_common and, optionally, bundled completions. |
 | `video` | Unified ffmpeg-backed video command with subcommands. |
 | `markdown` | Run the `markdown2` command-line processor. |
@@ -119,6 +127,55 @@ The first metadata-backed command is `video`. More commands can appear in the
 UI as they add metadata.
 
 Dependency: Flask, installed by `bcinit` into bash_common's local `.venv`.
+
+### Grouped Commands
+
+New command work should prefer grouped commands with subcommands. Existing
+standalone commands are still available and the grouped forms currently delegate
+to them:
+
+| Grouped command | Existing command |
+|-----------------|------------------|
+| `bashcommon init` | `bcinit` |
+| `bashcommon update` | `bcup` |
+| `bashcommon config` | `bcconfig` |
+| `bashcommon ui` | `bcui` |
+| `project git-init` | `newgit` |
+| `project unity-init` | `newunity` |
+| `project shell-script` | `newsh` |
+| `project cmake` | `cm` |
+| `project cmake-dir` | `cmdir` |
+| `files rename` | `mrename` |
+| `files format-cpp` | `uncrust` |
+| `android install` | `uadb -i` |
+| `android run` | `uadb -r` |
+| `android uninstall` | `uadb -u` |
+| `android log` | `uadb -l` |
+| `android list` | `uadb --list` |
+| `android dump` | `uadb --dump` |
+| `android activity` | `uadb --act` |
+| `android adb` | `uadb --cmd` |
+| `blender launch` | `blend` |
+| `blender python` | `blpy` |
+| `docs cheat` | `cheat` |
+| `docs markdown` | `markdown` |
+| `safari cookies` | `cookies` |
+
+### Completion
+
+bash_common loads metadata-backed completion for commands that expose
+`--bc-metadata`. Completion covers subcommands, declared options, option choices,
+and path-like arguments.
+
+Examples:
+
+```bash
+video <TAB>
+video convert --<TAB>
+video convert --format <TAB>
+project <TAB>
+android <TAB>
+```
 
 ### Platform-Specific Commands
 

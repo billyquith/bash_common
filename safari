@@ -1,0 +1,28 @@
+#!/usr/bin/env python3
+"""safari - Safari/macOS browser data helpers."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "Safari and macOS browser data helpers"
+
+ROUTES = {
+    "cookies": {
+        "target": "cookies",
+        "metadata": {
+            "name": "cookies",
+            "summary": "Read, filter, and export Safari binary cookie files",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Cookie command arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("safari", SUMMARY, ROUTES))

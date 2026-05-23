@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""docs - documentation helpers."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "documentation helpers"
+
+ROUTES = {
+    "cheat": {
+        "target": "cheat",
+        "metadata": {
+            "name": "cheat",
+            "summary": "View or edit local cheat sheets",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Cheat sheet arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "markdown": {
+        "target": "markdown",
+        "metadata": {
+            "name": "markdown",
+            "summary": "Render Markdown through markdown2",
+            "safety": "read",
+            "args": [passthrough_arg("args", "Markdown arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("docs", SUMMARY, ROUTES))

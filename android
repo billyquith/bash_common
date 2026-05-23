@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""android - Android/ADB helpers for Unity projects."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "Android and ADB helpers"
+
+ROUTES = {
+    "install": {
+        "target": "uadb",
+        "prefix": ["-i"],
+        "metadata": {
+            "name": "install",
+            "summary": "Install the configured APK",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "run": {
+        "target": "uadb",
+        "prefix": ["-r"],
+        "metadata": {
+            "name": "run",
+            "summary": "Run the configured Android package",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "uninstall": {
+        "target": "uadb",
+        "prefix": ["-u"],
+        "metadata": {
+            "name": "uninstall",
+            "summary": "Uninstall the configured Android package",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "log": {
+        "target": "uadb",
+        "prefix": ["-l"],
+        "metadata": {
+            "name": "log",
+            "summary": "Capture logcat output",
+            "safety": "write",
+            "args": [passthrough_arg("args", "logcat options")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "list": {
+        "target": "uadb",
+        "prefix": ["--list"],
+        "metadata": {
+            "name": "list",
+            "summary": "List installed third-party packages",
+            "safety": "read",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "dump": {
+        "target": "uadb",
+        "prefix": ["--dump"],
+        "metadata": {
+            "name": "dump",
+            "summary": "Dump configured package information",
+            "safety": "read",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "activity": {
+        "target": "uadb",
+        "prefix": ["--act"],
+        "metadata": {
+            "name": "activity",
+            "summary": "Show the launcher activity for the configured package",
+            "safety": "read",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "adb": {
+        "target": "uadb",
+        "prefix": ["--cmd"],
+        "metadata": {
+            "name": "adb",
+            "summary": "Pass commands directly to adb",
+            "safety": "write",
+            "args": [passthrough_arg("args", "ADB arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("android", SUMMARY, ROUTES))

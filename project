@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+"""project - project setup and build helpers."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "project setup and build helpers"
+
+ROUTES = {
+    "git-init": {
+        "target": "newgit",
+        "metadata": {
+            "name": "git-init",
+            "summary": "Initialise a Git repository with bash_common defaults",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "unity-init": {
+        "target": "newunity",
+        "metadata": {
+            "name": "unity-init",
+            "summary": "Scaffold a Unity project directory",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "shell-script": {
+        "target": "newsh",
+        "metadata": {
+            "name": "shell-script",
+            "summary": "Create a new Bash script from a starter template",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Filename and options")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "cmake": {
+        "target": "cm",
+        "metadata": {
+            "name": "cmake",
+            "summary": "Configure or update a CMake build directory",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "cmake-dir": {
+        "target": "cmdir",
+        "metadata": {
+            "name": "cmake-dir",
+            "summary": "Create a CMake build directory with a selected generator",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Build dir and generator")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("project", SUMMARY, ROUTES))

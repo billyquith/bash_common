@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+"""bashcommon - bash_common self-management commands."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "bash_common self-management"
+
+ROUTES = {
+    "init": {
+        "target": "bcinit",
+        "metadata": {
+            "name": "init",
+            "summary": "Check/install bash_common dependencies and shell setup",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "update": {
+        "target": "bcup",
+        "metadata": {
+            "name": "update",
+            "summary": "Update bash_common and optionally bundled completions",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "config": {
+        "target": "bcconfig",
+        "metadata": {
+            "name": "config",
+            "summary": "Show, query, or initialise .bcconfig settings",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "ui": {
+        "target": "bcui",
+        "metadata": {
+            "name": "ui",
+            "summary": "Start the local browser UI",
+            "safety": "write",
+            "args": [passthrough_arg()],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("bashcommon", SUMMARY, ROUTES))

@@ -63,6 +63,7 @@ export PATH=$PATH:$BC_INSTALL_DIR/$BC_SYSTEM
 source $BC_INSTALL_DIR/$BC_SYSTEM/_init.sh
 
 source $BC_INSTALL_DIR/completion/adb.completion.bash
+source $BC_INSTALL_DIR/completion/bash_common.completion.bash
 source $BC_INSTALL_DIR/completion/git.completion.bash
 
 export PS1="$(clr_escape_wrap '\w>' '36') "

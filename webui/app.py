@@ -139,6 +139,8 @@ def _validate_raw_argv(commands, command_line):
     subcommand = subcommands.get(parts[1])
     if not subcommand:
         raise ValueError(f"Unsupported subcommand: {parts[1]}")
+    if subcommand.get("passthrough"):
+        return command, subcommand, parts[1:], {}
 
     flags = _option_flags(subcommand)
     option_values = {}

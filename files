@@ -1,0 +1,39 @@
+#!/usr/bin/env python3
+"""files - file operation helpers."""
+# Supports --bc-metadata discovery.
+
+import sys
+
+from lib.bc_group import passthrough_arg, run_group
+
+
+SUMMARY = "file operation helpers"
+
+ROUTES = {
+    "rename": {
+        "target": "mrename",
+        "metadata": {
+            "name": "rename",
+            "summary": "Generate a reviewed rename script from regex matches",
+            "safety": "write",
+            "args": [passthrough_arg("args", "mrename arguments")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+    "format-cpp": {
+        "target": "uncrust",
+        "metadata": {
+            "name": "format-cpp",
+            "summary": "Format C/C++ files with the bundled Uncrustify config",
+            "safety": "write",
+            "args": [passthrough_arg("args", "Path and options")],
+            "options": [],
+            "artifacts": [],
+        },
+    },
+}
+
+
+if __name__ == "__main__":
+    sys.exit(run_group("files", SUMMARY, ROUTES))

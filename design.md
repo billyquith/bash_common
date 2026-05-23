@@ -49,6 +49,7 @@ Current shared modules:
 ```text
 lib/
   bc_config.py     .bcconfig discovery, loading, provenance, path abbreviation
+  bc_group.py      thin wrappers for grouped commands that delegate to old tools
   bc_metadata.py   command metadata discovery, command environment, config defaults
   bc_output.py     terminal output cleanup helpers
 ```
@@ -66,6 +67,28 @@ and `bcui`. Good candidates include:
 Avoid moving command-specific business logic into `lib/` too early. For example,
 video probing, encoding decisions, and ffmpeg command construction should remain
 owned by `video` until another command genuinely needs the same behaviour.
+
+## Grouped Commands
+
+Existing standalone tools are being moved behind grouped command entry points.
+The old commands remain as compatibility wrappers and direct CLI tools. The new
+groups are metadata-backed, discoverable by `bcui`, and currently delegate to
+the existing implementations:
+
+| Group | Purpose |
+|-------|---------|
+| `bashcommon` | self-management: `init`, `update`, `config`, `ui` |
+| `project` | project setup/build helpers: `git-init`, `unity-init`, `shell-script`, `cmake`, `cmake-dir` |
+| `files` | file operations: `rename`, `format-cpp` |
+| `android` | Unity/ADB workflows: `install`, `run`, `uninstall`, `log`, `list`, `dump`, `activity`, `adb` |
+| `blender` | Blender launch and Python helpers |
+| `docs` | cheat sheets and Markdown processing |
+| `safari` | Safari/macOS browser data helpers |
+
+These grouped commands are a migration layer, not the final implementation for
+every domain. As commands are rewritten in Python, logic can move from the old
+standalone scripts into the grouped command while preserving the old entry point
+as a thin compatibility wrapper.
 
 ## BC UI
 
@@ -118,6 +141,22 @@ The scalable model is:
 
 Shared discovery mechanics live in `lib/bc_metadata.py`; the metadata itself
 still belongs to each command.
+
+## Completion
+
+Bash completion is metadata-backed. `completion/bash_common.completion.bash`
+registers executable bash_common commands that advertise `--bc-metadata`, then
+uses that metadata to complete:
+
+- subcommand names,
+- declared long and short options,
+- choice values,
+- path-like arguments.
+
+This keeps completion aligned with the same command metadata used by `bcui` and
+`bcconfig`. Grouped passthrough commands complete their subcommands and then
+fall back to path completion for delegated arguments until those subcommands are
+rewritten with richer argument metadata.
 
 Recommended metadata entry point:
 
@@ -346,8 +385,10 @@ it proves useful.
 5. Add typed command input limited to discovered metadata. Done for the prototype.
 6. Update `bcconfig` to consume command metadata for config defaults. Done for
    the prototype.
-7. Gradually migrate standalone commands into grouped command families while
-   preserving the old entry points.
+7. Add grouped command entry points for standalone commands. Done as delegating
+   wrappers for the prototype.
+8. Gradually move command logic into grouped Python commands where that improves
+   maintainability, while preserving the old entry points.
 
 Candidate migrations:
 
