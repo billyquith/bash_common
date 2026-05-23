@@ -19,6 +19,7 @@ towards game development. Features (non-exhaustive) include:
 - Git, CMake, Unity, Android/ADB, Blender, Markdown, and video helpers.
 - Platform-specific aliases and completions.
 - Hierarchical `.bcconfig` configuration.
+- `bcui`, a local browser UI for metadata-backed commands.
 
 Implementation and future architecture notes live in [design.md](design.md). This
 README is the user-facing reference for available features and commands.
@@ -58,6 +59,7 @@ adds `BC_INSTALL_DIR` to `PATH`:
 |---------|---------|
 | `bcinit` | Check/install dependencies, shell setup, and user config. |
 | `bcconfig` | Show, query, and initialise `.bcconfig` settings. |
+| `bcui` | Start the local browser UI for metadata-backed commands. |
 | `bcup` | Update bash_common and, optionally, bundled completions. |
 | `video` | Unified ffmpeg-backed video command with subcommands. |
 | `markdown` | Run the `markdown2` command-line processor. |
@@ -89,6 +91,34 @@ All video operations are unified under the `video` command (Python3, backed by f
 Run `video <subcommand> -h` for per-subcommand help.
 
 Dependencies: `ffmpeg` and `ffprobe` must be on PATH. Run `bcinit` to install.
+
+### BC UI
+
+`bcui` starts a local Flask web server for interacting with bash_common commands
+in a browser:
+
+```bash
+bcui
+```
+
+By default it binds to `127.0.0.1:8765`. The UI discovers commands that expose
+machine-readable metadata, shows their subcommands and options, runs them as
+structured argument lists, and displays stdout, stderr, exit status, and known
+artifacts.
+
+Useful options:
+
+```bash
+bcui --host 127.0.0.1
+bcui --port 8765
+bcui --cwd /path/to/project
+bcui --no-browser
+```
+
+The first metadata-backed command is `video`. More commands can appear in the
+UI as they add metadata.
+
+Dependency: Flask, installed by `bcinit` into bash_common's local `.venv`.
 
 ### Platform-Specific Commands
 

@@ -34,7 +34,6 @@ Run `video <subcommand> -h` for per-command help.
 """
 
 import argparse
-import configparser
 import datetime
 import json
 import logging
@@ -45,10 +44,10 @@ import sys
 import tempfile
 import time
 
+from lib import bc_config
+
 LOG = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
-
-_BCCONFIG_NAME = ".bcconfig"
 
 # ---------------------------------------------------------------------------
 # Config schema
@@ -121,70 +120,184 @@ BCCONFIG_SCHEMA = {
 }
 
 
-# ---------------------------------------------------------------------------
-# User config
-# ---------------------------------------------------------------------------
-
-def _find_bcconfig_files(cwd=None):
-    """Return list of .bcconfig file paths from ~ down to cwd (root first)."""
-    home = os.path.expanduser("~")
-    cwd  = os.path.abspath(cwd or os.getcwd())
-
-    paths = []
-    home_cfg = os.path.join(home, _BCCONFIG_NAME)
-    if os.path.isfile(home_cfg):
-        paths.append(home_cfg)
-
-    try:
-        rel = os.path.relpath(cwd, home)
-    except ValueError:
-        rel = ".."  # different drive on Windows — treat as outside home
-
-    if rel.startswith(".."):
-        # cwd is outside home (e.g. external volume): walk upward from cwd to
-        # filesystem root collecting configs, then reverse so root → cwd order
-        # (cwd-level config wins over higher directories).
-        outside = []
-        current = cwd
-        while True:
-            candidate = os.path.join(current, _BCCONFIG_NAME)
-            if os.path.isfile(candidate):
-                outside.append(candidate)
-            parent = os.path.dirname(current)
-            if parent == current:   # reached filesystem root
-                break
-            current = parent
-        outside.reverse()
-        paths.extend(outside)
-        return paths
-
-    parts = [p for p in rel.split(os.sep) if p and p != "."]
-    current = home
-    for part in parts:
-        current = os.path.join(current, part)
-        candidate = os.path.join(current, _BCCONFIG_NAME)
-        if os.path.isfile(candidate):
-            paths.append(candidate)
-
-    return paths
+def _schema_for_metadata():
+    sections = {}
+    for section, entries in BCCONFIG_SCHEMA.items():
+        sections[section] = [
+            {"key": key, "default": default, "description": desc}
+            for key, default, desc in entries
+        ]
+    return sections
 
 
-def _load_config(local_dir=None):
-    """Load .bcconfig configuration via configparser.
-
-    Reads .bcconfig files from ~ down to local_dir (or cwd), merging them
-    so that closer-to-pwd values override parent values.
-    Returns a RawConfigParser instance; missing keys fall back gracefully.
-    """
-    cfg = configparser.RawConfigParser()
-    files = _find_bcconfig_files(local_dir or os.getcwd())
-    cfg.read(files, encoding="utf-8")
-    return cfg
+def bc_metadata():
+    """Return machine-readable command metadata for bcui/bcconfig discovery."""
+    return {
+        "schema_version": 1,
+        "name": "video",
+        "summary": "ffmpeg-backed video tools",
+        "command_style": "subcommands",
+        "config_sections": _schema_for_metadata(),
+        "subcommands": [
+            {
+                "name": "formats",
+                "summary": "Explain supported formats and codecs",
+                "safety": "read",
+                "args": [],
+                "options": [
+                    {"name": "all", "flag": "--all", "kind": "boolean",
+                     "label": "List all ffmpeg encoders"},
+                ],
+                "artifacts": [],
+            },
+            {
+                "name": "info",
+                "summary": "Print detailed file, container, and stream information",
+                "safety": "read",
+                "args": [
+                    {"name": "file", "label": "Video file", "kind": "path",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "json", "flag": "--json", "kind": "boolean",
+                     "label": "Raw ffprobe JSON"},
+                ],
+                "artifacts": [
+                    {"kind": "json", "source": "stdout", "when_option": "json"},
+                ],
+            },
+            {
+                "name": "convert",
+                "summary": "Transcode a file using config defaults",
+                "safety": "write",
+                "args": [
+                    {"name": "file", "label": "Video file", "kind": "path",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "format", "flag": "--format", "short_flag": "-f",
+                     "kind": "choice", "choices": ["mp4", "mkv", "mov", "webm"],
+                     "config": "video.default_format"},
+                    {"name": "height", "flag": "--height", "short_flag": "-H",
+                     "kind": "integer", "label": "Height"},
+                    {"name": "vcodec", "flag": "--vcodec", "kind": "string",
+                     "label": "Video codec", "config": "video.convert.video_codec"},
+                    {"name": "acodec", "flag": "--acodec", "kind": "string",
+                     "label": "Audio codec", "config": "video.convert.audio_codec"},
+                    {"name": "crf", "flag": "--crf", "kind": "integer",
+                     "label": "CRF", "config": "video.convert.video_crf"},
+                    {"name": "preset", "flag": "--preset", "kind": "string",
+                     "config": "video.convert.video_preset"},
+                    {"name": "abitrate", "flag": "--abitrate", "kind": "string",
+                     "label": "Audio bitrate", "config": "video.convert.audio_bitrate"},
+                    {"name": "output", "flag": "--output", "short_flag": "-o",
+                     "kind": "path", "label": "Output file", "artifact": "video"},
+                ],
+                "artifacts": [
+                    {"kind": "video", "path_option": "output"},
+                ],
+            },
+            {
+                "name": "concat",
+                "summary": "Join videos of the same format and resolution",
+                "safety": "write",
+                "args": [
+                    {"name": "files", "label": "Video files", "kind": "path-list",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "output", "flag": "--output", "short_flag": "-o",
+                     "kind": "path", "label": "Output file", "artifact": "video"},
+                ],
+                "artifacts": [
+                    {"kind": "video", "path_option": "output"},
+                ],
+            },
+            {
+                "name": "clamp",
+                "summary": "Cut a video to a time range",
+                "safety": "write",
+                "args": [
+                    {"name": "file", "label": "Video file", "kind": "path",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "start", "flag": "--start", "short_flag": "-s",
+                     "kind": "string", "label": "Start time"},
+                    {"name": "end", "flag": "--end", "short_flag": "-e",
+                     "kind": "string", "label": "End time"},
+                    {"name": "output", "flag": "--output", "short_flag": "-o",
+                     "kind": "path", "label": "Output file", "artifact": "video"},
+                ],
+                "artifacts": [
+                    {"kind": "video", "path_option": "output"},
+                ],
+            },
+            {
+                "name": "thumb",
+                "summary": "Extract a single frame as a PNG image",
+                "safety": "write",
+                "args": [
+                    {"name": "file", "label": "Video file", "kind": "path",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "time", "flag": "--time", "short_flag": "-t",
+                     "kind": "string", "config": "video.thumb.time"},
+                    {"name": "height", "flag": "--height", "short_flag": "-H",
+                     "kind": "integer", "label": "Height"},
+                    {"name": "output", "flag": "--output", "short_flag": "-o",
+                     "kind": "path", "label": "Output PNG", "artifact": "image/png"},
+                ],
+                "artifacts": [
+                    {"kind": "image", "path_option": "output"},
+                ],
+            },
+            {
+                "name": "catalog",
+                "summary": "Scan a directory tree and write an HTML report",
+                "safety": "write",
+                "args": [
+                    {"name": "directory", "label": "Directory", "kind": "directory",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "output", "flag": "--output", "short_flag": "-o",
+                     "kind": "path", "label": "Output HTML", "artifact": "text/html"},
+                ],
+                "artifacts": [
+                    {"kind": "html", "path_option": "output"},
+                ],
+            },
+            {
+                "name": "normalise",
+                "summary": "Batch-normalise a directory tree to a web-friendly format",
+                "safety": "write",
+                "args": [
+                    {"name": "directory", "label": "Directory", "kind": "directory",
+                     "required": True, "exists": True},
+                ],
+                "options": [
+                    {"name": "dry_run", "flag": "--dry-run", "short_flag": "-n",
+                     "kind": "boolean", "label": "Dry run"},
+                    {"name": "limit", "flag": "--limit", "short_flag": "-l",
+                     "kind": "integer", "label": "Limit"},
+                    {"name": "force", "flag": "--force", "short_flag": "-f",
+                     "kind": "boolean", "label": "Force"},
+                    {"name": "output", "flag": "--output", "short_flag": "-o",
+                     "kind": "path", "label": "Output HTML", "artifact": "text/html"},
+                ],
+                "artifacts": [
+                    {"kind": "html", "path_option": "output"},
+                ],
+            },
+        ],
+    }
 
 
 # Global config loaded once at import time.
 # Subcommands that accept a directory load their own merged config at runtime.
-_VIDEO_CFG = _load_config()
+_VIDEO_CFG = bc_config.load()
 
 
 def _vcfg(section, key, fallback, cfg=None):
@@ -1519,7 +1632,7 @@ def cmd_normalise(args):
     if not os.path.isdir(directory):
         sys.exit(f"Error: not a directory: {directory}")
 
-    cfg = _load_config(directory)
+    cfg = bc_config.load(directory)
     def gcfg(section, key, fallback):
         return _vcfg(section, key, fallback, cfg=cfg)
 
@@ -1541,7 +1654,7 @@ def cmd_normalise(args):
     ffmpeg_ver  = _tool_version("ffmpeg")
     ffprobe_ver = _tool_version("ffprobe")
     python_ver  = f"Python {sys.version.split()[0]}"
-    cfg_paths   = _find_bcconfig_files(directory)
+    cfg_paths   = bc_config.find_files(directory)
 
     run_info = {
         "target_fmt":     target_fmt,
@@ -1843,6 +1956,10 @@ def build_parser():
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "--bc-metadata":
+        print(json.dumps(bc_metadata(), indent=2, sort_keys=True))
+        return
+
     parser = build_parser()
     args = parser.parse_args()
 

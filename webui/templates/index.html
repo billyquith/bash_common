@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BC UI</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>BC UI</h1>
+      <p id="subtitle">bash_common command interface</p>
+    </div>
+    <form id="cwd-form" class="cwd-form">
+      <label for="cwd">Working directory</label>
+      <div class="cwd-row">
+        <input id="cwd" name="cwd" type="text" spellcheck="false">
+        <button type="submit">Reload</button>
+      </div>
+    </form>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section>
+        <h2>Commands</h2>
+        <nav id="command-list" class="command-list"></nav>
+      </section>
+      <section>
+        <h2>Config</h2>
+        <pre id="config-output" class="small-output"></pre>
+      </section>
+    </aside>
+
+    <section class="workspace">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="command-title">Command</h2>
+            <p id="command-summary"></p>
+          </div>
+          <select id="subcommand-select" aria-label="Subcommand"></select>
+        </div>
+        <form id="command-form" class="command-form"></form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Command Line</h2>
+            <p>Runs only discovered metadata-backed commands.</p>
+          </div>
+        </div>
+        <form id="raw-form" class="raw-form">
+          <input id="raw-command" type="text" placeholder="video info /path/to/file.mp4" spellcheck="false">
+          <button type="submit">Run</button>
+        </form>
+      </div>
+
+      <div class="panel output-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Output</h2>
+            <p id="job-meta"></p>
+          </div>
+        </div>
+        <div id="artifacts" class="artifacts"></div>
+        <div class="output-grid">
+          <section>
+            <h3>stdout</h3>
+            <pre id="stdout"></pre>
+          </section>
+          <section>
+            <h3>stderr</h3>
+            <pre id="stderr"></pre>
+          </section>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+"""bcui - local browser UI for bash_common commands."""
+
+import argparse
+import os
+import sys
+import webbrowser
+
+
+def main():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    venv_python = os.path.join(script_dir, ".venv", "bin", "python")
+    if os.path.exists(venv_python) and os.path.abspath(sys.executable) != os.path.abspath(venv_python):
+        os.execv(venv_python, [venv_python, __file__, *sys.argv[1:]])
+
+    sys.path.insert(0, script_dir)
+
+    parser = argparse.ArgumentParser(
+        prog="bcui",
+        description="Start the bash_common local web UI.",
+    )
+    parser.add_argument("--host", default="127.0.0.1",
+                        help="host to bind (default: 127.0.0.1)")
+    parser.add_argument("--port", default=8765, type=int,
+                        help="port to bind (default: 8765)")
+    parser.add_argument("--cwd", default=os.getcwd(),
+                        help="default working directory for commands")
+    parser.add_argument("--no-browser", action="store_true",
+                        help="do not open a browser automatically")
+    parser.add_argument("--debug", action="store_true",
+                        help="run Flask in debug mode")
+    args = parser.parse_args()
+
+    try:
+        from webui.app import create_app
+    except ModuleNotFoundError as exc:
+        if exc.name == "flask":
+            print("Error: Flask is not installed. Run 'bcinit' to install dependencies.")
+            print("Or install manually with: python3 -m pip install Flask")
+            return 1
+        raise
+
+    app = create_app(script_dir, os.path.abspath(args.cwd))
+    url = f"http://{args.host}:{args.port}"
+    print(f"BC UI running at {url}")
+    print("Press Ctrl-C to stop.")
+
+    if not args.no_browser:
+        webbrowser.open(url)
+
+    app.run(host=args.host, port=args.port, debug=args.debug)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

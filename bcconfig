@@ -20,98 +20,15 @@ Usage:
 
 import argparse
 import configparser
-import importlib.machinery
-import importlib.util
 import os
 import sys
 
-_CONFIG_NAME = ".bcconfig"
+from lib import bc_config, bc_metadata
 
-
-def _find_bcconfig_files(cwd=None):
-    """Return list of .bcconfig file paths in load order (lowest priority first).
-
-    For cwd under home: scans from ~ down to cwd.
-    For cwd outside home (e.g. an external volume): scans from ~ plus from
-    the filesystem root down to cwd, so local configs on external volumes are
-    still found and take precedence over ~/.bcconfig.
-    """
-    home = os.path.expanduser("~")
-    cwd  = os.path.abspath(cwd or os.getcwd())
-
-    paths = []
-    home_cfg = os.path.join(home, _CONFIG_NAME)
-    if os.path.isfile(home_cfg):
-        paths.append(home_cfg)
-
-    try:
-        rel = os.path.relpath(cwd, home)
-    except ValueError:
-        rel = ".."  # different drive on Windows — treat as outside home
-
-    if rel.startswith(".."):
-        # cwd is outside home: walk upward from cwd to filesystem root
-        # collecting configs, then reverse so root → cwd order (cwd wins).
-        outside = []
-        current = cwd
-        while True:
-            candidate = os.path.join(current, _CONFIG_NAME)
-            if os.path.isfile(candidate):
-                outside.append(candidate)
-            parent = os.path.dirname(current)
-            if parent == current:   # reached filesystem root
-                break
-            current = parent
-        outside.reverse()
-        paths.extend(outside)
-        return paths
-
-    # cwd is under home: walk subdirectory by subdirectory from home to cwd.
-    parts = [p for p in rel.split(os.sep) if p and p != "."]
-    current = home
-    for part in parts:
-        current = os.path.join(current, part)
-        candidate = os.path.join(current, _CONFIG_NAME)
-        if os.path.isfile(candidate):
-            paths.append(candidate)
-
-    return paths
-
-
-def _load_with_provenance(files):
-    """Load and merge .bcconfig files, tracking per-key provenance.
-
-    Returns:
-        merged:    RawConfigParser with all keys merged (later files win)
-        prov:      dict mapping (section, key) -> filepath of last writer
-        overridden: set of (section, key) pairs overridden by a later file
-    """
-    prov = {}           # (section, key) -> filepath
-    overridden = set()  # (section, key) pairs that were overridden
-
-    merged = configparser.RawConfigParser()
-
-    for filepath in files:
-        single = configparser.RawConfigParser()
-        single.read(filepath, encoding="utf-8")
-        for section in single.sections():
-            if not merged.has_section(section):
-                merged.add_section(section)
-            for key, value in single.items(section):
-                if (section, key) in prov:
-                    overridden.add((section, key))
-                merged.set(section, key, value)
-                prov[(section, key)] = filepath
-
-    return merged, prov, overridden
-
-
-def _abbrev(path):
-    """Replace home directory prefix with ~."""
-    home = os.path.expanduser("~")
-    if path == home or path.startswith(home + os.sep):
-        return "~" + path[len(home):]
-    return path
+_CONFIG_NAME = bc_config.CONFIG_NAME
+_find_bcconfig_files = bc_config.find_files
+_load_with_provenance = bc_config.load_with_provenance
+_abbrev = bc_config.abbrev
 
 
 def _show(args):
@@ -197,48 +114,10 @@ _OWN_SCHEMA = {
 _BC_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
-def _load_command_schema(name):
-    """Import a command script by name from the BC_INSTALL_DIR and return its
-    BCCONFIG_SCHEMA dict, or {} if it doesn't define one.
-
-    Uses SourceFileLoader directly because the scripts have no .py extension.
-    """
-    path = os.path.join(_BC_DIR, name)
-    if not os.path.isfile(path):
-        return {}
-    try:
-        loader = importlib.machinery.SourceFileLoader(name, path)
-        spec   = importlib.util.spec_from_loader(name, loader)
-        mod    = importlib.util.module_from_spec(spec)
-        loader.exec_module(mod)
-        return getattr(mod, "BCCONFIG_SCHEMA", {})
-    except Exception:
-        return {}
-
-
-def _has_schema(name):
-    """Return True if the file contains the BCCONFIG_SCHEMA marker without
-    loading it. Avoids exec'ing scripts that do argument parsing at module level."""
-    path = os.path.join(_BC_DIR, name)
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as fh:
-            return "BCCONFIG_SCHEMA" in fh.read()
-    except OSError:
-        return False
-
-
 def _all_schemas():
-    """Return a merged schema dict from all command scripts that expose
-    BCCONFIG_SCHEMA, plus bcconfig's own _OWN_SCHEMA."""
+    """Return schemas from command metadata, plus bcconfig's own settings."""
     merged = dict(_OWN_SCHEMA)
-    for fname in sorted(os.listdir(_BC_DIR)):
-        fpath = os.path.join(_BC_DIR, fname)
-        if not os.path.isfile(fpath) or fname.startswith(".") or fname == "bcconfig":
-            continue
-        if not _has_schema(fname):
-            continue
-        schema = _load_command_schema(fname)
-        merged.update(schema)
+    merged.update(bc_metadata.config_sections(bc_metadata.discover_commands(_BC_DIR)))
     return merged
 
 
@@ -250,18 +129,8 @@ def _init(args):
         print(f"Error: {_abbrev(dest)} already exists. Remove it first or edit it directly.")
         sys.exit(1)
 
-    # Load schema: try the named command's file first, fall back to full scan
     cmd = args.command.lower() if args.command else None
-    if cmd:
-        # Try loading just the named command's schema first (fast path)
-        cmd_schema = _load_command_schema(cmd) if _has_schema(cmd) else {}
-        if cmd_schema:
-            full_schema = dict(_OWN_SCHEMA)
-            full_schema.update(cmd_schema)
-        else:
-            full_schema = _all_schemas()
-    else:
-        full_schema = _all_schemas()
+    full_schema = _all_schemas()
 
     sections = {
         s: keys for s, keys in full_schema.items()

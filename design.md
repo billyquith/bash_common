@@ -38,9 +38,38 @@ android log
 The command line remains first-class. Any web UI or automation layer must wrap
 the same commands rather than replacing them.
 
+## Shared Python Library
+
+Python commands should share reusable project functionality through `lib/`.
+Command files should stay focused on their command-specific behaviour and
+metadata rather than accumulating repeated plumbing.
+
+Current shared modules:
+
+```text
+lib/
+  bc_config.py     .bcconfig discovery, loading, provenance, path abbreviation
+  bc_metadata.py   command metadata discovery, command environment, config defaults
+  bc_output.py     terminal output cleanup helpers
+```
+
+Use `lib/` for code that is needed by more than one command or by both a command
+and `bcui`. Good candidates include:
+
+- `.bcconfig` traversal and merging.
+- Command metadata discovery and validation helpers.
+- Artifact path handling.
+- Subprocess/job helpers.
+- Common output formatting.
+- Small platform-detection utilities.
+
+Avoid moving command-specific business logic into `lib/` too early. For example,
+video probing, encoding decisions, and ffmpeg command construction should remain
+owned by `video` until another command genuinely needs the same behaviour.
+
 ## BC UI
 
-`bcui` is the planned local web UI command. It should start a Flask server bound
+`bcui` is the local web UI command. It starts a Flask server bound
 to localhost and provide an interactive browser interface for supported
 bash_common commands.
 
@@ -86,6 +115,9 @@ The scalable model is:
 3. Tools such as `bcui` and `bcconfig` read that metadata directly from the
    command.
 4. Adding or changing a command does not require updating a central registry.
+
+Shared discovery mechanics live in `lib/bc_metadata.py`; the metadata itself
+still belongs to each command.
 
 Recommended metadata entry point:
 
@@ -214,7 +246,7 @@ Current behaviour:
 
 Target behaviour:
 
-- `bcconfig` should discover config schemas from command metadata.
+- `bcconfig` discovers config schemas from command metadata.
 - Commands should expose their config defaults in `--bc-metadata`.
 - `bcconfig --init` should generate templates from all discovered command
   metadata rather than from hard-coded knowledge.
@@ -306,12 +338,15 @@ it proves useful.
 
 ## Migration Plan
 
-1. Add metadata support to `video`.
-2. Update `bcconfig` to consume command metadata for config defaults.
+1. Add metadata support to `video`. Done for the prototype.
+2. Add shared Python helpers in `lib/`. Done for the prototype.
 3. Add `bcui` with Flask, command discovery, config display, and job execution.
-4. Build rich UI forms for `video`.
-5. Add typed command input limited to discovered metadata.
-6. Gradually migrate standalone commands into grouped command families while
+   Done for the prototype.
+4. Build generated UI forms for metadata-backed commands. Done for the prototype.
+5. Add typed command input limited to discovered metadata. Done for the prototype.
+6. Update `bcconfig` to consume command metadata for config defaults. Done for
+   the prototype.
+7. Gradually migrate standalone commands into grouped command families while
    preserving the old entry points.
 
 Candidate migrations:
