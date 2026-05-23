@@ -11,15 +11,68 @@ towards game development. Features (non-exhaustive) include:
 - Various command completions.
 - Application launchers/helpers.
 
-### Tools
+## User Features
 
-- Bookmark directories
-  - `g <name>` cd to bookmark
-  - `bl` list bookmarks
-  - `bp <name>` print bookmark directory
-  - `bs <name>` save current directory as bookmark
-  - `bd <name>` delete bookmark
-- `markdown` Python markdown2 processor
+- Portable Bash environment setup for macOS, Cygwin/Windows, and UNIX-like systems.
+- Directory bookmarks.
+- Project and script templates.
+- Git, CMake, Unity, Android/ADB, Blender, Markdown, and video helpers.
+- Platform-specific aliases and completions.
+- Hierarchical `.bcconfig` configuration.
+
+Implementation and future architecture notes live in [design.md](design.md). This
+README is the user-facing reference for available features and commands.
+
+## Command Inventory
+
+### Shell Aliases And Functions
+
+These are loaded into every interactive shell:
+
+| Command | Purpose |
+|---------|---------|
+| `cls` | Clear the terminal. |
+| `h` | Show shell history. |
+| `..`, `...`, `....` | Move up one, two, or three directories. |
+| `gg`, `ggf`, `ggs` | Git log graph aliases. |
+| `bs <name>` | Save the current directory as a bookmark. |
+| `g <name>` | Change directory to a saved bookmark. |
+| `bp <name>` | Print a bookmark path. |
+| `bd <name>` | Delete a bookmark. |
+| `bl` | List bookmarks. |
+| `tmpfile` | Generate a temporary filename. |
+| `b2h <bytes>` | Convert a byte count to a human-readable size. |
+| `duh [path]` | Show sorted disk usage and total size. |
+| `tree` | Fallback directory tree printer if the real `tree` command is absent. |
+| `command_exists <name>` | Test whether a command is available. |
+| `colecho` | Print coloured terminal text. |
+| `bc_cfg_get <section> <key> [fallback]` | Read a value from the effective `.bcconfig`. |
+| `clr_*`, `clr_dump` | Terminal colour helpers. |
+
+### Top-Level Commands
+
+These commands live in the bash_common root and are available after `.profile`
+adds `BC_INSTALL_DIR` to `PATH`:
+
+| Command | Purpose |
+|---------|---------|
+| `bcinit` | Check/install dependencies, shell setup, and user config. |
+| `bcconfig` | Show, query, and initialise `.bcconfig` settings. |
+| `bcup` | Update bash_common and, optionally, bundled completions. |
+| `video` | Unified ffmpeg-backed video command with subcommands. |
+| `markdown` | Run the `markdown2` command-line processor. |
+| `mrename` | Generate a reviewed rename script from regex matches. |
+| `newsh` | Create a new Bash script from a starter template. |
+| `newgit` | Initialise a Git repo with standard attributes/ignore files. |
+| `newunity` | Scaffold a Unity project directory and `.gitignore`. |
+| `uadb` | Unity Android/ADB helper for install, run, uninstall, and logs. |
+| `cm` | Configure/update a CMake build directory. |
+| `cmdir` | Create a CMake build directory with a selected generator. |
+| `uncrust` | Reformat C/C++ files with the bundled Uncrustify config. |
+| `blend` | Launch Blender using bookmarked Blender paths. |
+| `blpy` | Run Blender's bundled Python interpreter. |
+| `cheat` | View or edit local cheat sheets. |
+| `cookies` | Read, filter, and export Safari binary cookie files. |
 
 ### Video Tools
 
@@ -36,6 +89,35 @@ All video operations are unified under the `video` command (Python3, backed by f
 Run `video <subcommand> -h` for per-subcommand help.
 
 Dependencies: `ffmpeg` and `ffprobe` must be on PATH. Run `bcinit` to install.
+
+### Platform-Specific Commands
+
+macOS/Darwin loads `darwin/_init.sh` and adds `darwin` to `PATH`:
+
+| Command | Purpose |
+|---------|---------|
+| `ls`, `ll`, `la` | macOS listing aliases. |
+| `ql <file>` | Preview a file with Finder Quick Look. |
+| `dtop [0|1]` | Hide or show desktop icons. |
+| `ddd [-f]` | Delete Xcode DerivedData. |
+| `love ...` | Launch Love2D. |
+| `kom ...` | Launch Komodo Edit. |
+| `diffmerge ...` | Launch SourceGear DiffMerge. |
+| `rmate ...` | Remote TextMate helper. |
+
+Cygwin/Windows loads `cygwin/_init.sh` and adds `cygwin` to `PATH`:
+
+| Command | Purpose |
+|---------|---------|
+| `ls`, `ll`, `la` | GNU-colour listing aliases. |
+| `open ...` | Open paths/URLs with `cygstart`. |
+| `apt-cyg ...` | Cygwin package manager helper. |
+
+UNIX/Linux/BSD/WSL loads `unix/_init.sh` and adds `unix` to `PATH`:
+
+| Command | Purpose |
+|---------|---------|
+| `ls`, `ll`, `la` | GNU-colour listing aliases. |
 
 ## Configuration
 
