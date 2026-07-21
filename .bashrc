@@ -6,8 +6,7 @@
 # :-    https://www.gnu.org/software/bash/manual/bash.html#Shell-Parameter-Expansion
 
 if [ -z "$BC_INSTALL_DIR" ]; then
-    echo "ERROR, BC_INSTALL_DIR not set" # have your sourced .profile?
-    exit 1
+    export BC_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
 
 case $- in
