@@ -979,6 +979,9 @@ def _catalog_probe(full_path, rel_path):
         "width": "",
         "height": "",
         "fps": "",
+        "pix_fmt": "",
+        "color_transfer": "",
+        "interlaced": False,
         "audio_codec": "",
         "channels": "",
         "sample_rate": "",
@@ -996,6 +999,9 @@ def _catalog_probe(full_path, rel_path):
                 entry["width"] = stream.get("width", "")
                 entry["height"] = stream.get("height", "")
                 entry["fps"] = _fmt_fps(stream.get("avg_frame_rate", ""))
+                entry["pix_fmt"] = stream.get("pix_fmt", "")
+                entry["color_transfer"] = stream.get("color_transfer", "")
+                entry["interlaced"] = _is_interlaced(stream)
             elif ctype == "audio" and not entry["audio_codec"]:
                 entry["audio_codec"] = stream.get("codec_name", "")
                 entry["channels"] = stream.get("channels", "")
@@ -1022,6 +1028,10 @@ def _catalog_html(directory, entries):
         duration = _fmt_duration(e["duration"]) if e["duration"] else "—"
         size = _fmt_size(e["size"])
         video_cell = f'{e["video_codec"]}<br><span class="sub">{resolution} · {fps} fps</span>' if e["video_codec"] else "—"
+        pix_fmt = e["pix_fmt"] or "—"
+        hdr = e["color_transfer"] if e["color_transfer"] not in ("", "bt709", "unknown") else ""
+        color_cell = f'{pix_fmt}{" <span class=\"tag\">" + hdr + "</span>" if hdr else ""}'
+        interlace_cell = '<span class="tag">interlaced</span>' if e["interlaced"] else "progressive"
 
         cells = [
             f'<td class="path" title="{e["path"]}">{e["path"]}</td>',
@@ -1029,11 +1039,13 @@ def _catalog_html(directory, entries):
             f'<td class="r">{duration}</td>',
             f'<td>{e["format"]}</td>',
             f'<td>{video_cell}</td>',
+            f'<td>{color_cell}</td>',
+            f'<td>{interlace_cell}</td>',
             f'<td>{audio}</td>',
             f'<td class="r">{bitrate}</td>',
         ]
         if e["error"]:
-            cells = [f'<td class="path err" colspan="7" title="{e["error"]}">{e["path"]} — probe error</td>']
+            cells = [f'<td class="path err" colspan="9" title="{e["error"]}">{e["path"]} — probe error</td>']
         rows.append(f'<tr>{"".join(cells)}</tr>')
 
     rows_html = "\n".join(rows)
@@ -1074,6 +1086,9 @@ def _catalog_html(directory, entries):
   td.path {{ font-family: "SF Mono", "Fira Code", monospace; font-size: 12px; }}
   td.err {{ color: #c0392b; font-style: italic; }}
   .sub {{ font-size: 11px; color: #6e6e73; }}
+  .tag {{ display: inline-block; background: #f0e0d0; color: #c0392b;
+          font-size: 10px; font-weight: 600; padding: 1px 6px;
+          border-radius: 4px; margin-left: 4px; }}
   footer {{ padding: 12px 28px; font-size: 11px; color: #6e6e73; }}
 </style>
 </head>
@@ -1097,8 +1112,10 @@ def _catalog_html(directory, entries):
       <th onclick="sort(2)" class="r">Duration</th>
       <th onclick="sort(3)">Format</th>
       <th onclick="sort(4)">Video</th>
-      <th onclick="sort(5)">Audio</th>
-      <th onclick="sort(6)" class="r">Bitrate</th>
+      <th onclick="sort(5)">Pixel format</th>
+      <th onclick="sort(6)">Field order</th>
+      <th onclick="sort(7)">Audio</th>
+      <th onclick="sort(8)" class="r">Bitrate</th>
     </tr>
   </thead>
   <tbody>
@@ -1108,7 +1125,7 @@ def _catalog_html(directory, entries):
 </div>
 <footer>Generated {now} · video catalog</footer>
 <script>
-  let _dir = Array(7).fill(1);
+  let _dir = Array(9).fill(1);
   function sort(col) {{
     const tb = document.querySelector('#tbl tbody');
     const rows = Array.from(tb.rows);
