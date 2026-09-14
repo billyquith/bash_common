@@ -24,6 +24,9 @@ Subcommands:
                                batch-normalise a directory tree to a web-friendly
                                format (H.264/AAC MP4 at 720p); deinterlaces CRT
                                footage and upscales low-res content via lanczos;
+                               originals are renamed in place with a .orig suffix
+                               (cheap on the same filesystem). Set original_dir
+                               to move them elsewhere (e.g. an HDD);
                                -n dry-run: writes a full HTML assessment report
                                (green/red per criterion) without converting;
                                -l N stop after converting N files (re-run to continue)
@@ -114,7 +117,7 @@ BCCONFIG_SCHEMA = {
         ("video_preset",  "slow",                 "Encoding speed/compression: ultrafast … veryslow"),
         ("video_crf",     "20",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
         ("audio_bitrate", "160k",                 "Audio bitrate (e.g. 128k, 192k, 256k)"),
-        ("original_dir",  "/tmp/video-originals", "Where to move originals before transcoding"),
+        ("original_dir",  "", "Empty: rename originals in place as FILE.orig (same disk, no copy). Set a path to move originals there — useful when that disk is an HDD and you want to free SSD space."),
         ("deinterlace",   "auto",                 "Deinterlace: auto (detect), yes, no"),
     ],
 }
@@ -903,6 +906,38 @@ VIDEO_EXTENSIONS = {
     ".flv", ".mpg", ".mpeg", ".ts", ".mts", ".m2ts", ".3gp", ".ogv",
 }
 
+_ORIG_SUFFIX = ".orig"
+_ORIG_INPLACE_LABEL = "in-place (rename to *.orig)"
+
+
+def _is_normalise_input(fname):
+    """True if fname looks like a video we should scan (not a .orig backup)."""
+    if fname.endswith(_ORIG_SUFFIX):
+        return False
+    return os.path.splitext(fname)[1].lower() in VIDEO_EXTENSIONS
+
+
+def _originals_label(orig_dir):
+    """Human-readable originals destination for logs and HTML."""
+    if orig_dir:
+        return orig_dir
+    return _ORIG_INPLACE_LABEL
+
+
+def _backup_path(full_path, rel_path, orig_dir):
+    """Path to store the pre-normalise original.
+
+    Empty orig_dir: FILE.orig beside the source (rename on the same filesystem).
+    Otherwise: orig_dir / relative path (may copy across devices).
+    """
+    if orig_dir:
+        return os.path.join(orig_dir, rel_path)
+    return full_path + _ORIG_SUFFIX
+
+
+def _paths_equal(a, b):
+    return os.path.abspath(a) == os.path.abspath(b)
+
 
 def _fmt_duration(secs):
     secs = int(secs)
@@ -1290,7 +1325,7 @@ def _run_info_section(run_info):
         row("Audio bitrate",   run_info.get("abitrate", "—")),
         row("Target resolution", run_info.get("target_res", "—")),
         row("Deinterlace",     run_info.get("deinterlace", "—")),
-        row("Originals dir",   run_info.get("orig_dir", "—")),
+        row("Originals",       run_info.get("orig_dir", "—")),
         row("",                ""),
         row("ffmpeg",          run_info.get("ffmpeg_ver", "—")),
         row("ffprobe",         run_info.get("ffprobe_ver", "—")),
@@ -1714,7 +1749,8 @@ def cmd_normalise(args):
     crf         = gcfg("video.normalise", "video_crf",      "20")
     abitrate    = gcfg("video.normalise", "audio_bitrate",  "160k")
     deinterlace = gcfg("video.normalise", "deinterlace",    "auto").lower()
-    orig_dir    = os.path.expanduser(gcfg("video.normalise", "original_dir", "/tmp/video-originals"))
+    orig_dir    = os.path.expanduser(gcfg("video.normalise", "original_dir", "")).strip()
+    orig_label  = _originals_label(orig_dir)
     report_path = args.output or os.path.join(directory, "normalise-report.html")
 
     want_vc = _VCODEC_PROBE.get(vcodec, vcodec)
@@ -1735,7 +1771,7 @@ def cmd_normalise(args):
         "abitrate":       abitrate,
         "target_res":     f"h={target_h} (auto-width)",
         "deinterlace":    deinterlace,
-        "orig_dir":       orig_dir,
+        "orig_dir":       orig_label,
         "ffmpeg_ver":     ffmpeg_ver,
         "ffprobe_ver":    ffprobe_ver,
         "python_ver":     python_ver,
@@ -1746,13 +1782,14 @@ def cmd_normalise(args):
     if args.dry_run:
         print(f"Assessing  : {os.path.abspath(directory)}  (dry run — no files will be changed)")
         print(f"Target     : {target_str}")
+        print(f"Originals  → {orig_label}")
         print()
 
         entries = []
         for root, dirs, files in os.walk(directory):
             dirs.sort()
             for fname in sorted(files):
-                if os.path.splitext(fname)[1].lower() not in VIDEO_EXTENSIONS:
+                if not _is_normalise_input(fname):
                     continue
                 full_path = os.path.join(root, fname)
                 rel_path  = os.path.relpath(full_path, directory)
@@ -1791,7 +1828,7 @@ def cmd_normalise(args):
     limit = args.limit
     print(f"Normalizing : {os.path.abspath(directory)}")
     print(f"Target      : {target_str}")
-    print(f"Originals   → {orig_dir}")
+    print(f"Originals   → {orig_label}")
     print(f"Tools       : {ffmpeg_ver}  |  {ffprobe_ver}")
     if limit:
         print(f"Limit       : {limit} conversion(s)")
@@ -1809,7 +1846,7 @@ def cmd_normalise(args):
         for fname in sorted(files):
             if limit_reached:
                 break
-            if os.path.splitext(fname)[1].lower() not in VIDEO_EXTENSIONS:
+            if not _is_normalise_input(fname):
                 continue
 
             full_path = os.path.join(root, fname)
@@ -1843,16 +1880,26 @@ def cmd_normalise(args):
             tag = "[remux]  " if remux_candidate else "[convert]"
             print(f"  {tag} {rel_path}  ({', '.join(reasons)})")
 
-            backup_path = os.path.join(orig_dir, rel_path)
-            os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
+            backup_path = _backup_path(full_path, rel_path, orig_dir)
             stem = _strip_emoji(os.path.splitext(fname)[0])
             out_name = stem + f".{target_fmt}"
             out_path = os.path.join(root, out_name)
             if stem != os.path.splitext(fname)[0]:
                 print(f"  [rename]  {fname} → {out_name}")
 
+            backup_existed = False
+            encode_dest = None
+            replace_after = False
             try:
-                shutil.move(full_path, backup_path)
+                # Keep an existing backup (true original from an earlier run).
+                # Overwriting it on -f would destroy the pre-normalise file.
+                backup_existed = os.path.lexists(backup_path)
+                if backup_existed:
+                    source_path = full_path
+                else:
+                    os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
+                    shutil.move(full_path, backup_path)
+                    source_path = backup_path
 
                 needs_deint = any(c["label"] == "Deinterlace" and not c["ok"]
                                   for c in assess["checks"])
@@ -1869,22 +1916,39 @@ def cmd_normalise(args):
                 remux_only = not any([needs_vcodec_enc, needs_acodec_enc,
                                       needs_scale, needs_deint])
 
+                # ffmpeg cannot write to its input; use a sibling temp then replace.
+                encode_dest = out_path
+                if _paths_equal(source_path, out_path):
+                    fd, encode_dest = tempfile.mkstemp(
+                        prefix="._norm_",
+                        suffix=os.path.splitext(out_path)[1],
+                        dir=os.path.dirname(os.path.abspath(out_path)) or ".",
+                    )
+                    os.close(fd)
+                    # mkstemp creates an empty file; ffmpeg refuses to overwrite
+                    # without -y, so remove it and let ffmpeg create the output.
+                    os.unlink(encode_dest)
+                    replace_after = True
+
                 if remux_only:
-                    cmd = ["ffmpeg", "-i", backup_path, "-c", "copy", out_path]
+                    cmd = ["ffmpeg", "-i", source_path, "-c", "copy", encode_dest]
                 else:
                     vf_parts = []
                     if needs_deint:
                         vf_parts.append("yadif=mode=0")
                     if needs_scale or needs_deint:
                         vf_parts.append(_scale_filter(target_h))
-                    cmd = ["ffmpeg", "-i", backup_path]
+                    cmd = ["ffmpeg", "-i", source_path]
                     if vf_parts:
                         cmd += ["-vf", ",".join(vf_parts)]
                     cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
-                            "-acodec", acodec, "-b:a", abitrate, out_path]
+                            "-acodec", acodec, "-b:a", abitrate, encode_dest]
 
                 t0 = time.monotonic()
                 _run(cmd)
+                if replace_after:
+                    os.replace(encode_dest, out_path)
+                    encode_dest = None
                 elapsed = time.monotonic() - t0
 
                 after = _norm_probe(out_path)
@@ -1903,7 +1967,13 @@ def cmd_normalise(args):
             except Exception as exc:
                 msg = str(exc)
                 print(f"  [error]   {rel_path}: {msg}")
-                if os.path.isfile(backup_path) and not os.path.isfile(full_path):
+                if replace_after and encode_dest and os.path.isfile(encode_dest):
+                    try:
+                        os.unlink(encode_dest)
+                    except OSError:
+                        pass
+                if (not backup_existed and os.path.isfile(backup_path)
+                        and not os.path.isfile(full_path)):
                     shutil.move(backup_path, full_path)
                     print(f"            original restored")
                 results.append({"path": rel_path, "status": "error",
@@ -1922,7 +1992,7 @@ def cmd_normalise(args):
 
     run_info["total_elapsed"] = _fmt_elapsed(total_elapsed)
 
-    html = _normalise_html(directory, results, target_str, orig_dir, args.dry_run, run_info)
+    html = _normalise_html(directory, results, target_str, orig_label, args.dry_run, run_info)
     with open(report_path, "w", encoding="utf-8") as fh:
         fh.write(html)
     print(f"Report: {report_path}")

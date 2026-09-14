@@ -359,9 +359,10 @@ video_preset  = medium
 video_crf     = 23
 audio_bitrate = 128k
 
-# Where to move original files before transcoding.
-# A per-project .bcconfig can override this to keep originals alongside the project.
-original_dir  = /tmp/video-originals
+# Where to put originals before transcoding.
+# Empty (default): rename in place as FILE.orig (same filesystem, no GB copy).
+# Set a path to move originals there — useful when that disk is an HDD.
+original_dir  =
 
 # Deinterlace interlaced / CRT-sourced footage using yadif.
 #   auto   detect via ffprobe field_order and deinterlace if interlaced

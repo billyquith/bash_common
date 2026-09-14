@@ -82,7 +82,7 @@ All video operations are unified under the `video` command (Python3, backed by f
 - `video clamp [-s START] [-e END] [-o OUTPUT] FILE` — cut to a time range; `-s` and `-e` are optional (omit `-s` to start from the beginning, omit `-e` to go to the end)
 - `video thumb [-t TIME] [-o OUTPUT] FILE` — extract a single frame as a PNG image
 - `video catalog [-o OUTPUT] DIR` — scan a directory tree recursively and write a self-contained HTML report (name, size, duration, format, codec, resolution, fps, audio, bitrate)
-- `video normalise [-n] [-f] DIR` — batch-normalise a directory tree to H.264/AAC MP4 at 720p; deinterlaces CRT/interlaced footage, upscales low-res content with lanczos, moves originals to a configurable backup directory. `-n` dry-run (writes a green/red HTML assessment report without converting), `-f` force re-process
+- `video normalise [-n] [-f] DIR` — batch-normalise a directory tree to H.264/AAC MP4 at 720p; deinterlaces CRT/interlaced footage, upscales low-res content with lanczos; originals are renamed in place with a `.orig` suffix (same disk, no copy). Set `original_dir` to move originals to another path (useful for an HDD). `-n` dry-run (writes a green/red HTML assessment report without converting), `-f` force re-process
 
 Run `video <subcommand> -h` for per-subcommand help.
 
@@ -262,7 +262,9 @@ time = 00:00:05
 [video.normalise]
 target_width  = 1280
 target_height = 720
-original_dir  = /tmp/video-originals
+# Leave empty (or omit) to rename originals in place as FILE.orig.
+# Set a path to move originals there — e.g. an HDD, to free SSD space.
+original_dir  =
 deinterlace   = auto
 ```
 
@@ -278,7 +280,7 @@ video_crf    = 18
 video_preset = slow
 
 [video.normalise]
-original_dir = ./originals
+original_dir = ./originals   # move originals here instead of FILE.orig rename
 ```
 
 Only the keys you specify are overridden; everything else falls back to the
