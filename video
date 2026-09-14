@@ -29,7 +29,9 @@ Subcommands:
                                to move them elsewhere (e.g. an HDD);
                                -n dry-run: writes a full HTML assessment report
                                (green/red per criterion) without converting;
-                               -l N stop after converting N files (re-run to continue)
+                               -l N stop after converting N files (re-run to continue);
+                               -f re-process files that already appear normalised
+                               (normally skipped)
   thumb      [-t TIME] [-H PX] [-o OUTPUT] FILE
                                extract a single frame as a PNG image
 
