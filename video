@@ -1858,16 +1858,15 @@ def cmd_normalise(args):
     n_converted = 0
     limit_reached = False
 
+    # ---- pass 1: probe & assess every file up front, then order by how far
+    # out of compliance it is (most failing checks first, ties broken by
+    # largest file first) so that -l N converts the biggest wins first ----
+    candidates = []
     for root, dirs, files in os.walk(directory):
-        if limit_reached:
-            break
         dirs.sort()
         for fname in sorted(files):
-            if limit_reached:
-                break
             if not _is_normalise_input(fname):
                 continue
-
             full_path = os.path.join(root, fname)
             rel_path  = os.path.relpath(full_path, directory)
 
@@ -1881,123 +1880,137 @@ def cmd_normalise(args):
 
             assess = _norm_assess(before, deinterlace, target_h,
                                   want_vc, want_ac, target_fmt)
-            already_ok = assess["compliant"]
+            fail_count = sum(1 for c in assess["checks"] if not c["ok"])
+            candidates.append({
+                "fail_count": fail_count, "size": before["size"],
+                "root": root, "fname": fname, "full_path": full_path,
+                "rel_path": rel_path, "before": before, "assess": assess,
+            })
 
-            if already_ok and not args.force:
-                print(f"  [ok]      {rel_path}")
-                results.append({"path": rel_path, "status": "skipped",
-                                 "before": before, "after": before,
-                                 "reasons": [], "elapsed": None})
-                continue
+    candidates.sort(key=lambda c: (-c["fail_count"], -c["size"]))
 
-            reasons = list(assess["reasons"])
-            if args.force and already_ok:
-                reasons.append("forced")
+    # ---- pass 2: convert in priority order, up to -l N ----
+    for cand in candidates:
+        if limit_reached:
+            break
+        root, fname, full_path = cand["root"], cand["fname"], cand["full_path"]
+        rel_path, before, assess = cand["rel_path"], cand["before"], cand["assess"]
+        already_ok = assess["compliant"]
 
-            remux_candidate = assess["compliant"] is False and len(assess["reasons"]) == 1 \
-                              and assess["reasons"][0].startswith("format ")
-            tag = "[remux]  " if remux_candidate else "[convert]"
-            print(f"  {tag} {rel_path}  ({', '.join(reasons)})")
+        if already_ok and not args.force:
+            print(f"  [ok]      {rel_path}")
+            results.append({"path": rel_path, "status": "skipped",
+                             "before": before, "after": before,
+                             "reasons": [], "elapsed": None})
+            continue
 
-            backup_path = _backup_path(full_path, rel_path, orig_dir)
-            stem = _strip_emoji(os.path.splitext(fname)[0])
-            out_name = stem + f".{target_fmt}"
-            out_path = os.path.join(root, out_name)
-            if stem != os.path.splitext(fname)[0]:
-                print(f"  [rename]  {fname} → {out_name}")
+        reasons = list(assess["reasons"])
+        if args.force and already_ok:
+            reasons.append("forced")
 
-            backup_existed = False
-            encode_dest = None
-            replace_after = False
-            try:
-                # Keep an existing backup (true original from an earlier run).
-                # Overwriting it on -f would destroy the pre-normalise file.
-                backup_existed = os.path.lexists(backup_path)
-                if backup_existed:
-                    source_path = full_path
-                else:
-                    os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
-                    shutil.move(full_path, backup_path)
-                    source_path = backup_path
+        remux_candidate = assess["compliant"] is False and len(assess["reasons"]) == 1 \
+                          and assess["reasons"][0].startswith("format ")
+        tag = "[remux]  " if remux_candidate else "[convert]"
+        print(f"  {tag} {rel_path}  ({', '.join(reasons)})")
 
-                needs_deint = any(c["label"] == "Deinterlace" and not c["ok"]
-                                  for c in assess["checks"])
-                needs_scale = any(c["label"] == "Resolution" and not c["ok"]
-                                  for c in assess["checks"])
-                needs_vcodec_enc = any(c["label"] == "Video codec" and not c["ok"]
-                                       for c in assess["checks"])
-                needs_acodec_enc = any(c["label"] == "Audio codec" and not c["ok"]
-                                       for c in assess["checks"])
+        backup_path = _backup_path(full_path, rel_path, orig_dir)
+        stem = _strip_emoji(os.path.splitext(fname)[0])
+        out_name = stem + f".{target_fmt}"
+        out_path = os.path.join(root, out_name)
+        if stem != os.path.splitext(fname)[0]:
+            print(f"  [rename]  {fname} → {out_name}")
 
-                # Stream copy (remux) when only the container format differs —
-                # all streams are already the right codec and resolution.
-                # This is lossless and takes seconds instead of minutes.
-                remux_only = not any([needs_vcodec_enc, needs_acodec_enc,
-                                      needs_scale, needs_deint])
+        backup_existed = False
+        encode_dest = None
+        replace_after = False
+        try:
+            # Keep an existing backup (true original from an earlier run).
+            # Overwriting it on -f would destroy the pre-normalise file.
+            backup_existed = os.path.lexists(backup_path)
+            if backup_existed:
+                source_path = full_path
+            else:
+                os.makedirs(os.path.dirname(os.path.abspath(backup_path)), exist_ok=True)
+                shutil.move(full_path, backup_path)
+                source_path = backup_path
 
-                # ffmpeg cannot write to its input; use a sibling temp then replace.
-                encode_dest = out_path
-                if _paths_equal(source_path, out_path):
-                    fd, encode_dest = tempfile.mkstemp(
-                        prefix="._norm_",
-                        suffix=os.path.splitext(out_path)[1],
-                        dir=os.path.dirname(os.path.abspath(out_path)) or ".",
-                    )
-                    os.close(fd)
-                    # mkstemp creates an empty file; ffmpeg refuses to overwrite
-                    # without -y, so remove it and let ffmpeg create the output.
+            needs_deint = any(chk["label"] == "Deinterlace" and not chk["ok"]
+                              for chk in assess["checks"])
+            needs_scale = any(chk["label"] == "Resolution" and not chk["ok"]
+                              for chk in assess["checks"])
+            needs_vcodec_enc = any(chk["label"] == "Video codec" and not chk["ok"]
+                                   for chk in assess["checks"])
+            needs_acodec_enc = any(chk["label"] == "Audio codec" and not chk["ok"]
+                                   for chk in assess["checks"])
+
+            # Stream copy (remux) when only the container format differs —
+            # all streams are already the right codec and resolution.
+            # This is lossless and takes seconds instead of minutes.
+            remux_only = not any([needs_vcodec_enc, needs_acodec_enc,
+                                  needs_scale, needs_deint])
+
+            # ffmpeg cannot write to its input; use a sibling temp then replace.
+            encode_dest = out_path
+            if _paths_equal(source_path, out_path):
+                fd, encode_dest = tempfile.mkstemp(
+                    prefix="._norm_",
+                    suffix=os.path.splitext(out_path)[1],
+                    dir=os.path.dirname(os.path.abspath(out_path)) or ".",
+                )
+                os.close(fd)
+                # mkstemp creates an empty file; ffmpeg refuses to overwrite
+                # without -y, so remove it and let ffmpeg create the output.
+                os.unlink(encode_dest)
+                replace_after = True
+
+            if remux_only:
+                cmd = ["ffmpeg", "-i", source_path, "-c", "copy", encode_dest]
+            else:
+                vf_parts = []
+                if needs_deint:
+                    vf_parts.append("yadif=mode=0")
+                if needs_scale or needs_deint:
+                    vf_parts.append(_scale_filter(target_h))
+                cmd = ["ffmpeg", "-i", source_path]
+                if vf_parts:
+                    cmd += ["-vf", ",".join(vf_parts)]
+                cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
+                        "-acodec", acodec, "-b:a", abitrate, encode_dest]
+
+            t0 = time.monotonic()
+            _run(cmd)
+            if replace_after:
+                os.replace(encode_dest, out_path)
+                encode_dest = None
+            elapsed = time.monotonic() - t0
+
+            after = _norm_probe(out_path)
+            print(f"             → {_fmt_elapsed(elapsed)}", end="")
+            if before["duration"] and elapsed > 0:
+                print(f"  ({before['duration'] / elapsed:.1f}× realtime)", end="")
+            print()
+            results.append({"path": rel_path, "status": "converted",
+                             "before": before, "after": after,
+                             "reasons": reasons, "elapsed": elapsed})
+            n_converted += 1
+            if limit and n_converted >= limit:
+                limit_reached = True
+
+        except Exception as exc:
+            msg = str(exc)
+            print(f"  [error]   {rel_path}: {msg}")
+            if replace_after and encode_dest and os.path.isfile(encode_dest):
+                try:
                     os.unlink(encode_dest)
-                    replace_after = True
-
-                if remux_only:
-                    cmd = ["ffmpeg", "-i", source_path, "-c", "copy", encode_dest]
-                else:
-                    vf_parts = []
-                    if needs_deint:
-                        vf_parts.append("yadif=mode=0")
-                    if needs_scale or needs_deint:
-                        vf_parts.append(_scale_filter(target_h))
-                    cmd = ["ffmpeg", "-i", source_path]
-                    if vf_parts:
-                        cmd += ["-vf", ",".join(vf_parts)]
-                    cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
-                            "-acodec", acodec, "-b:a", abitrate, encode_dest]
-
-                t0 = time.monotonic()
-                _run(cmd)
-                if replace_after:
-                    os.replace(encode_dest, out_path)
-                    encode_dest = None
-                elapsed = time.monotonic() - t0
-
-                after = _norm_probe(out_path)
-                print(f"             → {_fmt_elapsed(elapsed)}", end="")
-                if before["duration"] and elapsed > 0:
-                    print(f"  ({before['duration'] / elapsed:.1f}× realtime)", end="")
-                print()
-                results.append({"path": rel_path, "status": "converted",
-                                 "before": before, "after": after,
-                                 "reasons": reasons, "elapsed": elapsed})
-                n_converted += 1
-                if limit and n_converted >= limit:
-                    limit_reached = True
-                    break
-
-            except Exception as exc:
-                msg = str(exc)
-                print(f"  [error]   {rel_path}: {msg}")
-                if replace_after and encode_dest and os.path.isfile(encode_dest):
-                    try:
-                        os.unlink(encode_dest)
-                    except OSError:
-                        pass
-                if (not backup_existed and os.path.isfile(backup_path)
-                        and not os.path.isfile(full_path)):
-                    shutil.move(backup_path, full_path)
-                    print(f"            original restored")
-                results.append({"path": rel_path, "status": "error",
-                                 "before": before, "after": None,
-                                 "reasons": reasons, "elapsed": None, "error_msg": msg})
+                except OSError:
+                    pass
+            if (not backup_existed and os.path.isfile(backup_path)
+                    and not os.path.isfile(full_path)):
+                shutil.move(backup_path, full_path)
+                print(f"            original restored")
+            results.append({"path": rel_path, "status": "error",
+                             "before": before, "after": None,
+                             "reasons": reasons, "elapsed": None, "error_msg": msg})
 
     total_elapsed = time.monotonic() - run_start
     conv    = sum(1 for r in results if r["status"] == "converted")
