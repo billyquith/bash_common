@@ -22,8 +22,8 @@ Subcommands:
                                tags, and more; --json for raw ffprobe output)
   normalise  [-n] [-l N] [-f] DIR
                                batch-normalise a directory tree to a web-friendly
-                               format (H.264/AAC MP4 at 720p); deinterlaces CRT
-                               footage and upscales low-res content via lanczos;
+                               format (H.264/AAC MP4, max 720p); deinterlaces CRT
+                               footage while preserving lower-resolution sources;
                                originals are renamed in place with a .orig suffix
                                (cheap on the same filesystem). Set original_dir
                                to move them elsewhere (e.g. an HDD);
@@ -95,6 +95,10 @@ logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
 #   This preserves 480p sources at 480p — upscaling would add no real quality
 #   and wastes storage. AI upscaling (e.g. Real-ESRGAN) is a known future
 #   improvement for 480p content but requires a separate tool.
+#
+# target_fps = (blank by default)
+#   Retains the source frame rate unless explicitly set. Supplying a positive
+#   rate (for example 30) makes every output use that rate.
 # ---------------------------------------------------------------------------
 
 BCCONFIG_SCHEMA = {
@@ -114,6 +118,7 @@ BCCONFIG_SCHEMA = {
     "video.normalise": [
         ("format",        "mp4",                  "Target container format: mp4, mkv, mov, webm"),
         ("target_height", "720",                  "Maximum height in pixels; taller videos are scaled down (aspect preserved), shorter videos are left as-is"),
+        ("target_fps",    "",                     "Output frame rate (e.g. 30); leave empty to preserve the source frame rate"),
         ("video_codec",   "libx264",              "Video codec: libx264, libx265, libvpx-vp9"),
         ("audio_codec",   "aac",                  "Audio codec: aac, libmp3lame, libopus"),
         ("video_preset",  "slow",                 "Encoding speed/compression: ultrafast … veryslow"),
@@ -956,6 +961,17 @@ def _fmt_size(nbytes):
     return f"{nbytes:.1f} TB"
 
 
+def _fmt_size_change(before, after):
+    """Describe the space saved (or added) between two byte counts."""
+    delta = before - after
+    if before <= 0:
+        return f"size {_fmt_size(after)}"
+    percent = abs(delta) / before * 100
+    if delta >= 0:
+        return f"saved {_fmt_size(delta)} ({percent:.1f}%)"
+    return f"grew {_fmt_size(-delta)} ({percent:.1f}%)"
+
+
 def _fmt_fps(raw):
     """Convert '30000/1001' style fraction to a clean decimal string."""
     try:
@@ -1200,6 +1216,30 @@ def _scale_filter(target_h):
     return f"scale=-2:{target_h}:flags=lanczos"
 
 
+def _parse_target_fps(value):
+    """Return a validated FPS target, or None when it is intentionally unset."""
+    value = str(value).strip()
+    if not value:
+        return None
+    try:
+        fps = float(value)
+    except ValueError:
+        sys.exit(f"Error: video.normalise target_fps must be a positive number, got {value!r}")
+    if fps <= 0:
+        sys.exit(f"Error: video.normalise target_fps must be a positive number, got {value!r}")
+    return fps
+
+
+def _fps_matches(actual, target):
+    """Whether a probed FPS is effectively the requested output FPS."""
+    if target is None:
+        return True
+    try:
+        return abs(float(actual) - target) < 0.01
+    except (TypeError, ValueError):
+        return False
+
+
 def _tool_version(tool):
     """Return the version string for *tool* (e.g. 'ffmpeg 6.1.1'), or 'unknown'."""
     try:
@@ -1220,7 +1260,7 @@ def _fmt_elapsed(secs):
     return f"{m}m {s:02d}s" if m else f"{s}s"
 
 
-def _norm_assess(before, deinterlace, target_h, want_vc, want_ac, target_fmt):
+def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac, target_fmt):
     """Compare *before* probe data against normalise targets.
 
     Returns a dict with compliant (bool), reasons (list[str]), and checks
@@ -1231,6 +1271,7 @@ def _norm_assess(before, deinterlace, target_h, want_vc, want_ac, target_fmt):
     """
     needs_deint  = deinterlace == "yes" or (deinterlace == "auto" and before["interlaced"])
     needs_scale  = (before["height"] > target_h)   # clamp only — never upscale
+    needs_fps    = not _fps_matches(before["fps"], target_fps)
     needs_vcodec = (before["video_codec"] != want_vc)
     needs_acodec = (before["audio_codec"] != want_ac)
     # Use the full comma-separated format_names string for detection so that a
@@ -1240,6 +1281,7 @@ def _norm_assess(before, deinterlace, target_h, want_vc, want_ac, target_fmt):
 
     res_current = f'{before["width"]}×{before["height"]}' if before["width"] else "—"
     res_target  = f"h={target_h}"
+    fps_target  = f"{target_fps:g}" if target_fps is not None else "source"
 
     checks = [
         {
@@ -1264,6 +1306,13 @@ def _norm_assess(before, deinterlace, target_h, want_vc, want_ac, target_fmt):
             "fix": f"scale down to h={target_h} (width auto from aspect): {res_current}",
         },
         {
+            "label": "Frame rate",
+            "ok": not needs_fps,
+            "current": f'{before["fps"] or "—"} fps',
+            "target": f"{fps_target} fps",
+            "fix": f"convert frame rate to {fps_target} fps",
+        },
+        {
             "label": "Container",
             "ok": not needs_fmt,
             "current": before["format"] or "—",
@@ -1286,12 +1335,14 @@ def _norm_assess(before, deinterlace, target_h, want_vc, want_ac, target_fmt):
         reasons.append(f"acodec {before['audio_codec'] or 'none'}→{want_ac}")
     if needs_scale:
         reasons.append(f"scale down {res_current}→{res_target}")
+    if needs_fps:
+        reasons.append(f"fps {before['fps'] or 'unknown'}→{fps_target}")
     if needs_fmt:
         reasons.append(f"format {before['format']}→{target_fmt}")
     if needs_deint:
         reasons.append("deinterlace")
 
-    compliant = not any([needs_vcodec, needs_acodec, needs_scale, needs_fmt, needs_deint])
+    compliant = not any([needs_vcodec, needs_acodec, needs_scale, needs_fps, needs_fmt, needs_deint])
     return {"compliant": compliant, "reasons": reasons, "checks": checks}
 
 
@@ -1343,6 +1394,7 @@ def _run_info_section(run_info):
         row("Preset",          run_info.get("preset", "—")),
         row("Audio bitrate",   run_info.get("abitrate", "—")),
         row("Target resolution", run_info.get("target_res", "—")),
+        row("Target frame rate", run_info.get("target_fps", "source")),
         row("Deinterlace",     run_info.get("deinterlace", "—")),
         row("Originals",       run_info.get("orig_dir", "—")),
         row("",                ""),
@@ -1761,6 +1813,7 @@ def cmd_normalise(args):
         return _vcfg(section, key, fallback, cfg=cfg)
 
     target_h    = int(gcfg("video.normalise", "target_height",  "720"))
+    target_fps  = _parse_target_fps(gcfg("video.normalise", "target_fps", ""))
     target_fmt  = gcfg("video.normalise", "format",         "mp4")
     vcodec      = gcfg("video.normalise", "video_codec",    "libx264")
     acodec      = gcfg("video.normalise", "audio_codec",    "aac")
@@ -1774,7 +1827,8 @@ def cmd_normalise(args):
 
     want_vc = _VCODEC_PROBE.get(vcodec, vcodec)
     want_ac = _ACODEC_PROBE.get(acodec, acodec)
-    target_str = f"{vcodec} h={target_h} (auto-width) / {acodec} .{target_fmt}"
+    fps_str = f"{target_fps:g} fps" if target_fps is not None else "source fps"
+    target_str = f"{vcodec} h={target_h} (auto-width), {fps_str} / {acodec} .{target_fmt}"
 
     ffmpeg_ver  = _tool_version("ffmpeg")
     ffprobe_ver = _tool_version("ffprobe")
@@ -1789,6 +1843,7 @@ def cmd_normalise(args):
         "preset":         preset,
         "abitrate":       abitrate,
         "target_res":     f"h={target_h} (auto-width)",
+        "target_fps":     fps_str,
         "deinterlace":    deinterlace,
         "orig_dir":       orig_label,
         "ffmpeg_ver":     ffmpeg_ver,
@@ -1818,7 +1873,7 @@ def cmd_normalise(args):
                     entries.append({"path": rel_path, "before": before,
                                       "error": "probe failed or no video stream"})
                     continue
-                assess = _norm_assess(before, deinterlace, target_h,
+                assess = _norm_assess(before, deinterlace, target_h, target_fps,
                                       want_vc, want_ac, target_fmt)
                 tag = "[ok]" if assess["compliant"] else "[change]"
                 detail = "" if assess["compliant"] else f"  ({', '.join(assess['reasons'])})"
@@ -1878,7 +1933,7 @@ def cmd_normalise(args):
                                  "reasons": [], "error_msg": "probe failed"})
                 continue
 
-            assess = _norm_assess(before, deinterlace, target_h,
+            assess = _norm_assess(before, deinterlace, target_h, target_fps,
                                   want_vc, want_ac, target_fmt)
             fail_count = sum(1 for c in assess["checks"] if not c["ok"])
             candidates.append({
@@ -1911,7 +1966,8 @@ def cmd_normalise(args):
         remux_candidate = assess["compliant"] is False and len(assess["reasons"]) == 1 \
                           and assess["reasons"][0].startswith("format ")
         tag = "[remux]  " if remux_candidate else "[convert]"
-        print(f"  {tag} {rel_path}  ({', '.join(reasons)})")
+        print(f"  {tag} {rel_path}")
+        print(f"             reason: {'; '.join(reasons)}")
 
         backup_path = _backup_path(full_path, rel_path, orig_dir)
         stem = _strip_emoji(os.path.splitext(fname)[0])
@@ -1938,6 +1994,8 @@ def cmd_normalise(args):
                               for chk in assess["checks"])
             needs_scale = any(chk["label"] == "Resolution" and not chk["ok"]
                               for chk in assess["checks"])
+            needs_fps = any(chk["label"] == "Frame rate" and not chk["ok"]
+                            for chk in assess["checks"])
             needs_vcodec_enc = any(chk["label"] == "Video codec" and not chk["ok"]
                                    for chk in assess["checks"])
             needs_acodec_enc = any(chk["label"] == "Audio codec" and not chk["ok"]
@@ -1947,7 +2005,7 @@ def cmd_normalise(args):
             # all streams are already the right codec and resolution.
             # This is lossless and takes seconds instead of minutes.
             remux_only = not any([needs_vcodec_enc, needs_acodec_enc,
-                                  needs_scale, needs_deint])
+                                  needs_scale, needs_fps, needs_deint])
 
             # ffmpeg cannot write to its input; use a sibling temp then replace.
             encode_dest = out_path
@@ -1971,6 +2029,8 @@ def cmd_normalise(args):
                     vf_parts.append("yadif=mode=0")
                 if needs_scale or needs_deint:
                     vf_parts.append(_scale_filter(target_h))
+                if needs_fps:
+                    vf_parts.append(f"fps={target_fps:g}")
                 cmd = ["ffmpeg", "-i", source_path]
                 if vf_parts:
                     cmd += ["-vf", ",".join(vf_parts)]
@@ -1985,7 +2045,14 @@ def cmd_normalise(args):
             elapsed = time.monotonic() - t0
 
             after = _norm_probe(out_path)
-            print(f"             → {_fmt_elapsed(elapsed)}", end="")
+            result = (f"{after['video_codec'] or 'video'}/{after['audio_codec'] or 'no audio'}"
+                      f" · {after['width']}×{after['height']}"
+                      f" · {after['fps'] or '—'} fps")
+            size_change = _fmt_size_change(before["size"], after["size"])
+            print(f"             result: {result}")
+            print(f"             size: {_fmt_size(before['size'])} → {_fmt_size(after['size'])}"
+                  f" ({size_change})")
+            print(f"             time: {_fmt_elapsed(elapsed)}", end="")
             if before["duration"] and elapsed > 0:
                 print(f"  ({before['duration'] / elapsed:.1f}× realtime)", end="")
             print()

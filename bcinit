@@ -345,10 +345,13 @@ time = 00:00:05
 # Target container format for `video normalise`.
 format = mp4
 
-# Target resolution. Videos are scaled to fit within this box (maintaining
-# aspect ratio, padded with black bars).
-target_width  = 1280
+# Target resolution. This is a height ceiling: taller videos are downscaled
+# while shorter videos retain their original resolution.
 target_height = 720
+
+# Output frame rate. Leave blank to preserve the source frame rate. Set a
+# positive value (for example 30) to convert every output to that rate.
+target_fps =
 
 # Video and audio codecs — H.264/AAC gives maximum browser compatibility.
 video_codec   = libx264
