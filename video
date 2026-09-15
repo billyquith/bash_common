@@ -20,7 +20,7 @@ Subcommands:
                                (codec, profile, resolution, aspect ratio, fps,
                                colour space, bit depth, bitrate, channels,
                                tags, and more; --json for raw ffprobe output)
-  normalise  [-n] [-l N] [-f] DIR
+  normalise  [-n] [-l N] [-f] [-d] DIR
                                batch-normalise a directory tree to a web-friendly
                                format (H.264/AAC MP4, max 720p); deinterlaces CRT
                                footage while preserving lower-resolution sources;
@@ -125,6 +125,7 @@ BCCONFIG_SCHEMA = {
         ("video_crf",     "20",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
         ("audio_bitrate", "160k",                 "Audio bitrate (e.g. 128k, 192k, 256k)"),
         ("original_dir",  "", "Empty: rename originals in place as FILE.orig (same disk, no copy). Set a path to move originals there — useful when that disk is an HDD and you want to free SSD space."),
+        ("delete_originals", "false",            "Delete a newly-created original backup only after a successful, verified conversion"),
         ("deinterlace",   "auto",                 "Deinterlace: auto (detect), yes, no"),
     ],
 }
@@ -294,6 +295,8 @@ def bc_metadata():
                      "kind": "integer", "label": "Limit"},
                     {"name": "force", "flag": "--force", "short_flag": "-f",
                      "kind": "boolean", "label": "Force"},
+                    {"name": "delete_originals", "flag": "--delete-originals", "short_flag": "-d",
+                     "kind": "boolean", "label": "Delete originals"},
                     {"name": "output", "flag": "--output", "short_flag": "-o",
                      "kind": "path", "label": "Output HTML", "artifact": "text/html"},
                 ],
@@ -1230,6 +1233,16 @@ def _parse_target_fps(value):
     return fps
 
 
+def _parse_bool(value, name):
+    """Parse a config boolean with an actionable error for invalid values."""
+    value = str(value).strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off", ""):
+        return False
+    sys.exit(f"Error: {name} must be true or false, got {value!r}")
+
+
 def _fps_matches(actual, target):
     """Whether a probed FPS is effectively the requested output FPS."""
     if target is None:
@@ -1822,7 +1835,12 @@ def cmd_normalise(args):
     abitrate    = gcfg("video.normalise", "audio_bitrate",  "160k")
     deinterlace = gcfg("video.normalise", "deinterlace",    "auto").lower()
     orig_dir    = os.path.expanduser(gcfg("video.normalise", "original_dir", "")).strip()
-    orig_label  = _originals_label(orig_dir)
+    delete_originals = args.delete_originals or _parse_bool(
+        gcfg("video.normalise", "delete_originals", "false"),
+        "video.normalise delete_originals",
+    )
+    orig_label = ("delete after verified conversion" if delete_originals
+                  else _originals_label(orig_dir))
     report_path = args.output or os.path.join(directory, "normalise-report.html")
 
     want_vc = _VCODEC_PROBE.get(vcodec, vcodec)
@@ -2045,6 +2063,8 @@ def cmd_normalise(args):
             elapsed = time.monotonic() - t0
 
             after = _norm_probe(out_path)
+            if not after["video_codec"]:
+                raise RuntimeError("output verification failed: no video stream")
             result = (f"{after['video_codec'] or 'video'}/{after['audio_codec'] or 'no audio'}"
                       f" · {after['width']}×{after['height']}"
                       f" · {after['fps'] or '—'} fps")
@@ -2056,6 +2076,9 @@ def cmd_normalise(args):
             if before["duration"] and elapsed > 0:
                 print(f"  ({before['duration'] / elapsed:.1f}× realtime)", end="")
             print()
+            if delete_originals and not backup_existed:
+                os.unlink(backup_path)
+                print(f"             original: deleted {backup_path}")
             results.append({"path": rel_path, "status": "converted",
                              "before": before, "after": after,
                              "reasons": reasons, "elapsed": elapsed})
@@ -2191,6 +2214,8 @@ def build_parser():
                         "(skipped/already-ok files do not count toward the limit)")
     p.add_argument("-f", "--force", action="store_true",
                    help="re-process files that already appear normalised")
+    p.add_argument("-d", "--delete-originals", action="store_true",
+                   help="delete each newly-created original only after successful output verification")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
                    help="HTML report path (default: DIR/normalise-report.html)")
 

@@ -367,6 +367,10 @@ audio_bitrate = 128k
 # Set a path to move originals there — useful when that disk is an HDD.
 original_dir  =
 
+# Delete the newly-created original only after ffmpeg succeeds and the output
+# has been verified. Existing .orig backups are never deleted automatically.
+delete_originals = false
+
 # Deinterlace interlaced / CRT-sourced footage using yadif.
 #   auto   detect via ffprobe field_order and deinterlace if interlaced
 #   yes    always deinterlace
