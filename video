@@ -39,7 +39,6 @@ Run `video <subcommand> -h` for per-command help.
 """
 
 import argparse
-import configparser
 import datetime
 import json
 import logging
@@ -50,6 +49,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+from lib import bc_config
 
 LOG = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.WARNING)
@@ -308,49 +309,14 @@ def bc_metadata():
     }
 
 
-_BCCONFIG_NAME = ".bcconfig"
-
-
 def _find_bcconfig_files(cwd=None):
-    """Return list of .bcconfig file paths from ~ down to cwd (root first)."""
-    home = os.path.expanduser("~")
-    cwd = os.path.abspath(cwd or os.getcwd())
-
-    paths = []
-    home_cfg = os.path.join(home, _BCCONFIG_NAME)
-    if os.path.isfile(home_cfg):
-        paths.append(home_cfg)
-
-    try:
-        rel = os.path.relpath(cwd, home)
-    except ValueError:
-        return paths  # different drive on Windows
-
-    if rel.startswith(".."):
-        return paths  # cwd is outside home; only home config applies
-
-    parts = [p for p in rel.split(os.sep) if p and p != "."]
-    current = home
-    for part in parts:
-        current = os.path.join(current, part)
-        candidate = os.path.join(current, _BCCONFIG_NAME)
-        if os.path.isfile(candidate):
-            paths.append(candidate)
-
-    return paths
+    """Return .bcconfig paths in the same order as the `bcconfig` command."""
+    return bc_config.find_files(cwd)
 
 
 def _load_config(local_dir=None):
-    """Load .bcconfig configuration via configparser.
-
-    Reads .bcconfig files from ~ down to local_dir (or cwd), merging them
-    so that closer-to-pwd values override parent values.
-    Returns a RawConfigParser instance; missing keys fall back gracefully.
-    """
-    cfg = configparser.RawConfigParser()
-    files = _find_bcconfig_files(local_dir or os.getcwd())
-    cfg.read(files, encoding="utf-8")
-    return cfg
+    """Load effective .bcconfig settings using the shared command resolver."""
+    return bc_config.load(local_dir or os.getcwd())
 
 
 # Global config loaded once at import time.

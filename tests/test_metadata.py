@@ -1,4 +1,7 @@
 import pathlib
+import importlib.machinery
+import importlib.util
+import tempfile
 import unittest
 
 from lib import bc_metadata
@@ -98,6 +101,21 @@ class MetadataTests(unittest.TestCase):
         self.assertIn("video", sections)
         self.assertIn("video.convert", sections)
         self.assertIn("video.normalise", sections)
+
+    def test_video_loads_config_from_external_volume_path(self):
+        """video must honour the same external-directory overrides as bcconfig."""
+        loader = importlib.machinery.SourceFileLoader("video_for_test", str(ROOT / "video"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        video = importlib.util.module_from_spec(spec)
+        loader.exec_module(video)
+
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
+            path = pathlib.Path(tmp)
+            (path / ".bcconfig").write_text(
+                "[video.normalise]\ntarget_height = 1080\n", encoding="utf-8"
+            )
+            cfg = video._load_config(tmp)
+            self.assertEqual("1080", cfg.get("video.normalise", "target_height"))
 
     # --- metadata shape ---
 
