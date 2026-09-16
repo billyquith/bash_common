@@ -346,12 +346,18 @@ time = 00:00:05
 format = mp4
 
 # Target resolution. This is a height ceiling: taller videos are downscaled
-# while shorter videos retain their original resolution.
+# while shorter videos retain their original resolution unless force_normalise
+# is enabled.
 target_height = 720
 
-# Output frame rate. Leave blank to preserve the source frame rate. Set a
-# positive value (for example 30) to convert every output to that rate.
+# Output frame-rate ceiling. Leave blank to preserve the source frame rate.
+# A positive value (for example 30) reduces only higher rates unless
+# force_normalise is enabled.
 target_fps =
+
+# Always re-encode and apply target_height/target_fps exactly. This can upscale
+# lower-resolution video using Lanczos, so leave disabled for normal archiving.
+force_normalise = false
 
 # Video and audio codecs — H.264/AAC gives maximum browser compatibility.
 video_codec   = libx264

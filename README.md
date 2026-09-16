@@ -82,7 +82,7 @@ All video operations are unified under the `video` command (Python3, backed by f
 - `video clamp [-s START] [-e END] [-o OUTPUT] FILE` — cut to a time range; `-s` and `-e` are optional (omit `-s` to start from the beginning, omit `-e` to go to the end)
 - `video thumb [-t TIME] [-o OUTPUT] FILE` — extract a single frame as a PNG image
 - `video catalog [-o OUTPUT] DIR` — scan a directory tree recursively and write a self-contained HTML report (name, size, duration, format, codec, resolution, fps, audio, bitrate)
-- `video normalise [-n] [-f] [-d] DIR` — batch-normalise a directory tree to H.264/AAC MP4 with a 720p height ceiling; deinterlaces CRT/interlaced footage while preserving lower-resolution sources. Set `target_fps` to a positive value (such as 30) to convert output frame rates, or leave it blank to preserve them. Originals are renamed in place with a `.orig` suffix (same disk, no copy); `-d`/`--delete-originals` (or `delete_originals = true`) removes each newly-created original after successful output verification. Set `original_dir` to move originals to another path (useful for an HDD). `-n` dry-run (writes a green/red HTML assessment report without converting), `-f` force re-process
+- `video normalise [-n] [-f] [-d] DIR` — batch-normalise a directory tree to H.264/AAC MP4. `target_height` and `target_fps` are ceilings: video above them is reduced, while video at or below them is preserved. `-f`/`--force-normalise` (or `force_normalise = true`) always applies the configured height and FPS exactly, including Lanczos upscaling of smaller video. Originals are renamed in place with a `.orig` suffix (same disk, no copy); `-d`/`--delete-originals` (or `delete_originals = true`) removes each newly-created original after successful output verification. Set `original_dir` to move originals to another path (useful for an HDD). `-n` dry-run (writes a green/red HTML assessment report without converting)
 
 Run `video <subcommand> -h` for per-subcommand help.
 
@@ -261,8 +261,10 @@ time = 00:00:05
 
 [video.normalise]
 target_height = 720
-# Leave blank to preserve the source frame rate; e.g. set 30 to output 30 fps.
+# Frame-rate ceiling; higher video is reduced, lower video is preserved.
 target_fps    =
+# Force exact target height/FPS, including Lanczos upscaling of smaller video.
+force_normalise = false
 # Leave empty (or omit) to rename originals in place as FILE.orig.
 # Set a path to move originals there — e.g. an HDD, to free SSD space.
 original_dir  =

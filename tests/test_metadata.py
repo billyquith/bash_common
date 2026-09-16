@@ -117,6 +117,29 @@ class MetadataTests(unittest.TestCase):
             cfg = video._load_config(tmp)
             self.assertEqual("1080", cfg.get("video.normalise", "target_height"))
 
+    def test_video_normalise_uses_limits_unless_forced(self):
+        loader = importlib.machinery.SourceFileLoader("video_limits_test", str(ROOT / "video"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        video = importlib.util.module_from_spec(spec)
+        loader.exec_module(video)
+        source = {
+            "interlaced": False, "height": 480, "width": 640, "fps": "24",
+            "video_codec": "h264", "audio_codec": "aac",
+            "format": "mp4", "format_names": "mov,mp4",
+        }
+
+        limited = video._norm_assess(
+            source, "auto", 1080, 30, "h264", "aac", "mp4"
+        )
+        self.assertTrue(limited["compliant"])
+
+        forced = video._norm_assess(
+            source, "auto", 1080, 30, "h264", "aac", "mp4", True
+        )
+        self.assertFalse(forced["compliant"])
+        self.assertIn("scale 640×480→h=1080", forced["reasons"])
+        self.assertIn("fps 24→30", forced["reasons"])
+
     # --- metadata shape ---
 
     def test_all_commands_have_subcommand_style(self):
