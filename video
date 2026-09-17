@@ -9,7 +9,8 @@ Subcommands:
                                remove time from the start and/or end; start and
                                end are optional
   concat     [-o OUTPUT] FILE...
-                               join videos of the same format and resolution
+                               join matching videos in order, encoding the result
+                               with [video.normalise] settings
   convert    [-f FORMAT] [-o OUTPUT] FILE
                                transcode to a target format (default: H.264/AAC MP4)
   formats    [--all]           explain supported container formats and codecs,
@@ -211,7 +212,7 @@ def bc_metadata():
             },
             {
                 "name": "concat",
-                "summary": "Join videos of the same format and resolution",
+                "summary": "Join matching videos using normalise output settings",
                 "safety": "write",
                 "args": [
                     {"name": "files", "label": "Video files", "kind": "path-list",
@@ -827,8 +828,44 @@ def cmd_formats(args):
 
 
 def cmd_concat(args):
-    _require("ffmpeg")
-    output = args.output or "output.mp4"
+    _require("ffmpeg", "ffprobe")
+
+    config_dir = os.path.dirname(os.path.abspath(args.output or args.files[0]))
+    cfg = _load_config(config_dir)
+    def gcfg(key, fallback):
+        return _vcfg("video.normalise", key, fallback, cfg=cfg)
+
+    target_h = int(gcfg("target_height", "720"))
+    target_fps = _parse_target_fps(gcfg("target_fps", ""))
+    target_fmt = gcfg("format", "mp4")
+    vcodec = gcfg("video_codec", "libx264")
+    acodec = gcfg("audio_codec", "aac")
+    preset = gcfg("video_preset", "slow")
+    crf = gcfg("video_crf", "20")
+    abitrate = gcfg("audio_bitrate", "160k")
+    deinterlace = gcfg("deinterlace", "auto").lower()
+    force_normalise = _parse_bool(
+        gcfg("force_normalise", "false"), "video.normalise force_normalise"
+    )
+    output = args.output or f"output.{target_fmt}"
+
+    # The concat demuxer requires matching inputs. Use the first stream to
+    # decide which normalise filters the final encode needs.
+    first = _norm_probe(args.files[0])
+    if not first["video_codec"]:
+        sys.exit(f"Error: cannot probe video stream: {args.files[0]}")
+    needs_scale = (first["height"] != target_h if force_normalise
+                   else first["height"] > target_h)
+    if target_fps is None:
+        needs_fps = False
+    elif force_normalise:
+        needs_fps = not _fps_matches(first["fps"], target_fps)
+    else:
+        try:
+            needs_fps = float(first["fps"]) > target_fps + 0.01
+        except (TypeError, ValueError):
+            needs_fps = True
+    needs_deint = deinterlace == "yes" or (deinterlace == "auto" and first["interlaced"])
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as flist:
         for f in args.files:
@@ -836,13 +873,28 @@ def cmd_concat(args):
         flist_path = flist.name
 
     try:
-        _run([
+        cmd = [
             "ffmpeg", "-f", "concat", "-safe", "0",
             "-i", flist_path,
-            "-vcodec", "libx264", "-acodec", "aac",
-            output,
-        ])
+        ]
+        vf_parts = []
+        if needs_deint:
+            vf_parts.append("yadif=mode=0")
+        if needs_scale:
+            vf_parts.append(_scale_filter(target_h))
+        if needs_fps:
+            vf_parts.append(f"fps={target_fps:g}")
+        if vf_parts:
+            cmd += ["-vf", ",".join(vf_parts)]
+        cmd += [
+            "-vcodec", vcodec, "-crf", crf, "-preset", preset,
+            "-acodec", acodec, "-b:a", abitrate, output,
+        ]
+        _run(cmd)
         print(f"Concatenated: {output}")
+        print(f"Normalise target: {vcodec}, max h={target_h}, "
+              f"{f'max {target_fps:g} fps' if target_fps is not None else 'source fps'}, "
+              f"{acodec} .{target_fmt}")
     finally:
         os.unlink(flist_path)
 
@@ -2164,9 +2216,9 @@ def build_parser():
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
 
     # concat
-    p = sub.add_parser("concat", help="join videos of the same format and resolution")
+    p = sub.add_parser("concat", help="join matching videos using normalise output settings")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT",
-                   help="output filename (default: output.mp4)")
+                   help="output filename (default: output.<normalise format>)")
     p.add_argument("files", nargs="+", metavar="FILE")
 
     # crop
