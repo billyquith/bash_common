@@ -20,7 +20,7 @@ Subcommands:
                                (codec, profile, resolution, aspect ratio, fps,
                                colour space, bit depth, bitrate, channels,
                                tags, and more; --json for raw ffprobe output)
-  normalise  [-n] [-l N] [-f] [-d] DIR
+  normalise  [-n] [-l N] [-f] [-d] [-p PRESET] DIR
                                batch-normalise a directory tree to a web-friendly
                                format (H.264/AAC MP4, max 720p); deinterlaces CRT
                                footage while preserving lower-resolution sources;
@@ -297,6 +297,8 @@ def bc_metadata():
                      "kind": "integer", "label": "Limit"},
                     {"name": "force", "flag": "--force", "short_flag": "-f",
                      "kind": "boolean", "label": "Force normalise"},
+                    {"name": "preset", "flag": "--preset", "short_flag": "-p",
+                     "kind": "string", "label": "Normalise preset"},
                     {"name": "delete_originals", "flag": "--delete-originals", "short_flag": "-d",
                      "kind": "boolean", "label": "Delete originals"},
                     {"name": "output", "flag": "--output", "short_flag": "-o",
@@ -1474,6 +1476,7 @@ def _run_info_section(run_info):
         row("Audio bitrate",   run_info.get("abitrate", "—")),
         row("Target resolution", run_info.get("target_res", "—")),
         row("Target frame rate", run_info.get("target_fps", "source")),
+        row("Normalise preset", run_info.get("normalise_preset", "(base)")),
         row("Force normalise", run_info.get("force_normalise", "no")),
         row("Deinterlace",     run_info.get("deinterlace", "—")),
         row("Originals",       run_info.get("orig_dir", "—")),
@@ -1890,25 +1893,37 @@ def cmd_normalise(args):
         sys.exit(f"Error: not a directory: {directory}")
 
     cfg = _load_config(directory)
-    def gcfg(section, key, fallback):
-        return _vcfg(section, key, fallback, cfg=cfg)
+    preset_name = (args.preset or "").strip()
+    preset_section = f"video.normalise.{preset_name}" if preset_name else None
+    if preset_section and not cfg.has_section(preset_section):
+        available = sorted(
+            section[len("video.normalise."):]
+            for section in cfg.sections()
+            if section.lower().startswith("video.normalise.")
+        )
+        hint = f" Available presets: {', '.join(available)}." if available else ""
+        sys.exit(f"Error: no [{preset_section}] section in the effective .bcconfig.{hint}")
 
-    target_h    = int(gcfg("video.normalise", "target_height",  "720"))
-    target_fps  = _parse_target_fps(gcfg("video.normalise", "target_fps", ""))
-    target_fmt  = gcfg("video.normalise", "format",         "mp4")
-    vcodec      = gcfg("video.normalise", "video_codec",    "libx264")
-    acodec      = gcfg("video.normalise", "audio_codec",    "aac")
-    preset      = gcfg("video.normalise", "video_preset",   "slow")
-    crf         = gcfg("video.normalise", "video_crf",      "20")
-    abitrate    = gcfg("video.normalise", "audio_bitrate",  "160k")
-    deinterlace = gcfg("video.normalise", "deinterlace",    "auto").lower()
+    def gcfg(key, fallback):
+        base = _vcfg("video.normalise", key, fallback, cfg=cfg)
+        return cfg.get(preset_section, key, fallback=base) if preset_section else base
+
+    target_h    = int(gcfg("target_height",  "720"))
+    target_fps  = _parse_target_fps(gcfg("target_fps", ""))
+    target_fmt  = gcfg("format",         "mp4")
+    vcodec      = gcfg("video_codec",    "libx264")
+    acodec      = gcfg("audio_codec",    "aac")
+    preset      = gcfg("video_preset",   "slow")
+    crf         = gcfg("video_crf",      "20")
+    abitrate    = gcfg("audio_bitrate",  "160k")
+    deinterlace = gcfg("deinterlace",    "auto").lower()
     force_normalise = args.force or _parse_bool(
-        gcfg("video.normalise", "force_normalise", "false"),
+        gcfg("force_normalise", "false"),
         "video.normalise force_normalise",
     )
-    orig_dir    = os.path.expanduser(gcfg("video.normalise", "original_dir", "")).strip()
+    orig_dir    = os.path.expanduser(gcfg("original_dir", "")).strip()
     delete_originals = args.delete_originals or _parse_bool(
-        gcfg("video.normalise", "delete_originals", "false"),
+        gcfg("delete_originals", "false"),
         "video.normalise delete_originals",
     )
     orig_label = ("delete after verified conversion" if delete_originals
@@ -1921,6 +1936,8 @@ def cmd_normalise(args):
     fps_str = (f"{target_fps:g} fps" if force_normalise else f"max {target_fps:g} fps") \
               if target_fps is not None else "source fps"
     target_str = f"{vcodec} {height_str} (auto-width), {fps_str} / {acodec} .{target_fmt}"
+    if preset_name:
+        target_str += f" · preset {preset_name}"
 
     ffmpeg_ver  = _tool_version("ffmpeg")
     ffprobe_ver = _tool_version("ffprobe")
@@ -1936,6 +1953,7 @@ def cmd_normalise(args):
         "abitrate":       abitrate,
         "target_res":     f"{height_str} (auto-width)",
         "target_fps":     fps_str,
+        "normalise_preset": preset_name or "(base)",
         "force_normalise": "yes" if force_normalise else "no",
         "deinterlace":    deinterlace,
         "orig_dir":       orig_label,
@@ -1949,6 +1967,7 @@ def cmd_normalise(args):
     if args.dry_run:
         print(f"Assessing  : {os.path.abspath(directory)}  (dry run — no files will be changed)")
         print(f"Target     : {target_str}")
+        print(f"Preset     : {preset_name or '(base [video.normalise])'}")
         print(f"Originals  → {orig_label}")
         print()
 
@@ -1995,6 +2014,7 @@ def cmd_normalise(args):
     limit = args.limit
     print(f"Normalizing : {os.path.abspath(directory)}")
     print(f"Target      : {target_str}")
+    print(f"Preset      : {preset_name or '(base [video.normalise])'}")
     print(f"Originals   → {orig_label}")
     print(f"Tools       : {ffmpeg_ver}  |  {ffprobe_ver}")
     if limit:
@@ -2298,6 +2318,8 @@ def build_parser():
                         "(skipped/already-ok files do not count toward the limit)")
     p.add_argument("-f", "--force", "--force-normalise", action="store_true",
                    help="always re-encode and apply target height/FPS exactly, including upscaling")
+    p.add_argument("-p", "--preset", default=None, metavar="PRESET",
+                   help="use [video.normalise.PRESET] as an overlay on [video.normalise]")
     p.add_argument("-d", "--delete-originals", action="store_true",
                    help="delete each newly-created original only after successful output verification")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT",

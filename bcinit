@@ -382,6 +382,16 @@ delete_originals = false
 #   yes    always deinterlace
 #   no     never deinterlace
 deinterlace   = auto
+
+# Optional named overlays for `video normalise -p PRESET`. Each inherits every
+# unspecified setting from [video.normalise]. Example presets:
+# [video.normalise.high_quality]
+# video_crf = 18
+# video_preset = slow
+#
+# [video.normalise.fast]
+# video_crf = 23
+# video_preset = veryfast
 """
 
 # Section mapping for migrating old ~/.bccfg/video.ini values

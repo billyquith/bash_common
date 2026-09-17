@@ -271,6 +271,15 @@ original_dir  =
 # Opt-in: remove the newly-created original only after successful verification.
 delete_originals = false
 deinterlace   = auto
+
+# Optional named overlays, selected with: video normalise -p high_quality DIR
+[video.normalise.high_quality]
+video_crf    = 18
+video_preset = slow
+
+[video.normalise.fast]
+video_crf    = 23
+video_preset = veryfast
 ```
 
 ### Directory override example
@@ -290,6 +299,10 @@ original_dir = ./originals   # move originals here instead of FILE.orig rename
 
 Only the keys you specify are overridden; everything else falls back to the
 parent or global config.
+
+`video normalise -p PRESET DIR` overlays `[video.normalise.PRESET]` on top of
+`[video.normalise]`. `bcconfig video.normalise` displays the base section and
+every named preset section found in the effective configuration.
 
 ### The `bcconfig` command
 
