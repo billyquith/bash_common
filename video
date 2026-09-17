@@ -5,10 +5,9 @@ video - unified video tool backed by ffmpeg
 Subcommands:
   catalog    [-o OUTPUT] DIR
                                scan a directory tree and write an HTML report
-  clamp      [-s START] [-e END] [-o OUTPUT] FILE
-                               cut to a time range; start and end are optional
-                               (omit -s to start from the beginning, omit -e to
-                               go to the end of the video)
+  crop       [-s START] [-e END] [-o OUTPUT] FILE
+                               remove time from the start and/or end; start and
+                               end are optional
   concat     [-o OUTPUT] FILE...
                                join videos of the same format and resolution
   convert    [-f FORMAT] [-o OUTPUT] FILE
@@ -227,8 +226,8 @@ def bc_metadata():
                 ],
             },
             {
-                "name": "clamp",
-                "summary": "Cut a video to a time range",
+                "name": "crop",
+                "summary": "Trim time from the start and/or end without re-encoding",
                 "safety": "write",
                 "args": [
                     {"name": "file", "label": "Video file", "kind": "path",
@@ -848,17 +847,18 @@ def cmd_concat(args):
         os.unlink(flist_path)
 
 
-def cmd_clamp(args):
+def cmd_crop(args):
     _require("ffmpeg")
-    output = args.output or _default_output(args.file, "_clamp.mp4")
-    cmd = ["ffmpeg", "-i", args.file]
+    _, ext = os.path.splitext(args.file)
+    output = args.output or _default_output(args.file, f"_crop{ext or '.mp4'}")
+    cmd = ["ffmpeg"]
     if args.start:
         cmd += ["-ss", args.start]
     if args.end:
         cmd += ["-to", args.end]
-    cmd += ["-vcodec", "libx264", "-acodec", "aac", output]
+    cmd += ["-i", args.file, "-map", "0", "-c", "copy", output]
     _run(cmd)
-    print(f"Clamped: {output}")
+    print(f"Cropped: {output}")
 
 
 def cmd_thumb(args):
@@ -2169,12 +2169,12 @@ def build_parser():
                    help="output filename (default: output.mp4)")
     p.add_argument("files", nargs="+", metavar="FILE")
 
-    # clamp
-    p = sub.add_parser("clamp", help="cut to a time range (start and/or end optional)")
+    # crop
+    p = sub.add_parser("crop", help="trim time from the start and/or end without re-encoding")
     p.add_argument("-s", "--start", default=None, metavar="TIME",
-                   help="start time as HH:MM:SS or seconds (default: beginning of file)")
+                   help="keep video from this time (default: beginning; cut snaps to a keyframe)")
     p.add_argument("-e", "--end", default=None, metavar="TIME",
-                   help="end time as HH:MM:SS or seconds (default: end of file)")
+                   help="keep video through this time (default: end; cut snaps to a keyframe)")
     p.add_argument("-o", "--output", default=None, metavar="OUTPUT")
     p.add_argument("file", metavar="FILE")
 
@@ -2232,7 +2232,7 @@ def main():
         "info":      cmd_info,
         "normalise": cmd_normalise,
         "thumb":     cmd_thumb,
-        "clamp":     cmd_clamp,
+        "crop":      cmd_crop,
     }
     dispatch[args.command](args)
 

@@ -92,7 +92,7 @@ class MetadataTests(unittest.TestCase):
     # --- video ---
 
     def test_video_subcommands(self):
-        expected = {"formats", "info", "convert", "concat", "clamp",
+        expected = {"formats", "info", "convert", "concat", "crop",
                     "thumb", "normalise", "catalog"}
         self.assertEqual(expected, self._subcommand_names("video"))
 
