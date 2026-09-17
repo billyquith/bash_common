@@ -964,6 +964,32 @@ def _backup_path(full_path, rel_path, orig_dir):
     return full_path + _ORIG_SUFFIX
 
 
+def _cleanup_incomplete_normalise(encode_dest, replace_after, output_preexisted,
+                                  backup_existed, backup_path, full_path):
+    """Remove this run's partial output and restore an original moved aside.
+
+    Returns whether a partial output was removed and whether an original was
+    restored. Existing outputs and backups from an earlier run are untouched.
+    """
+    removed = restored = False
+    # A sibling temporary destination is always ours. A direct destination is
+    # ours only when it did not exist before this conversion started.
+    if encode_dest and (replace_after or not output_preexisted) and os.path.lexists(encode_dest):
+        try:
+            os.unlink(encode_dest)
+            removed = True
+        except OSError:
+            pass
+    if (not backup_existed and os.path.isfile(backup_path)
+            and not os.path.lexists(full_path)):
+        try:
+            shutil.move(backup_path, full_path)
+            restored = True
+        except OSError:
+            pass
+    return removed, restored
+
+
 def _paths_equal(a, b):
     return os.path.abspath(a) == os.path.abspath(b)
 
@@ -2043,6 +2069,7 @@ def cmd_normalise(args):
         backup_existed = False
         encode_dest = None
         replace_after = False
+        output_preexisted = False
         try:
             # Keep an existing backup (true original from an earlier run).
             # Overwriting it on -f would destroy the pre-normalise file.
@@ -2073,6 +2100,7 @@ def cmd_normalise(args):
 
             # ffmpeg cannot write to its input; use a sibling temp then replace.
             encode_dest = out_path
+            output_preexisted = os.path.lexists(out_path)
             if _paths_equal(source_path, out_path):
                 fd, encode_dest = tempfile.mkstemp(
                     prefix="._norm_",
@@ -2132,18 +2160,28 @@ def cmd_normalise(args):
             if limit and n_converted >= limit:
                 limit_reached = True
 
+        except KeyboardInterrupt:
+            removed, restored = _cleanup_incomplete_normalise(
+                encode_dest, replace_after, output_preexisted, backup_existed,
+                backup_path, full_path,
+            )
+            print("\n  [interrupted] conversion cancelled", end="")
+            if removed:
+                print("; partial output deleted", end="")
+            if restored:
+                print("; original restored", end="")
+            print()
+            sys.exit(130)
+
         except Exception as exc:
             msg = str(exc)
             print(f"  [error]   {rel_path}: {msg}")
-            if replace_after and encode_dest and os.path.isfile(encode_dest):
-                try:
-                    os.unlink(encode_dest)
-                except OSError:
-                    pass
-            if (not backup_existed and os.path.isfile(backup_path)
-                    and not os.path.isfile(full_path)):
-                shutil.move(backup_path, full_path)
-                print(f"            original restored")
+            _, restored = _cleanup_incomplete_normalise(
+                encode_dest, replace_after, output_preexisted, backup_existed,
+                backup_path, full_path,
+            )
+            if restored:
+                print("            original restored")
             results.append({"path": rel_path, "status": "error",
                              "before": before, "after": None,
                              "reasons": reasons, "elapsed": None, "error_msg": msg})

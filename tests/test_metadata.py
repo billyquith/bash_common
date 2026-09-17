@@ -140,6 +140,28 @@ class MetadataTests(unittest.TestCase):
         self.assertIn("scale 640×480→h=1080", forced["reasons"])
         self.assertIn("fps 24→30", forced["reasons"])
 
+    def test_incomplete_normalise_cleans_partial_output_and_restores_original(self):
+        loader = importlib.machinery.SourceFileLoader("video_cleanup_test", str(ROOT / "video"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        video = importlib.util.module_from_spec(spec)
+        loader.exec_module(video)
+
+        with tempfile.TemporaryDirectory(dir="/private/tmp") as tmp:
+            root = pathlib.Path(tmp)
+            original = root / "clip.avi"
+            backup = root / "clip.avi.orig"
+            partial = root / "clip.mp4"
+            backup.write_bytes(b"original")
+            partial.write_bytes(b"partial")
+
+            removed, restored = video._cleanup_incomplete_normalise(
+                str(partial), False, False, False, str(backup), str(original)
+            )
+            self.assertTrue(removed)
+            self.assertTrue(restored)
+            self.assertFalse(partial.exists())
+            self.assertEqual(b"original", original.read_bytes())
+
     # --- metadata shape ---
 
     def test_all_commands_have_subcommand_style(self):
