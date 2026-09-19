@@ -163,6 +163,27 @@ class MetadataTests(unittest.TestCase):
         self.assertFalse(over_limit["compliant"])
         self.assertIn("clamp audio 192 kb/s→≤160 kb/s", over_limit["reasons"])
 
+    def test_video_normalise_can_retain_configured_av1(self):
+        loader = importlib.machinery.SourceFileLoader("video_av1_test", str(ROOT / "video"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        video = importlib.util.module_from_spec(spec)
+        loader.exec_module(video)
+        source = {
+            "interlaced": False, "height": 720, "width": 1280, "fps": "30",
+            "video_codec": "av1", "audio_codec": "aac", "audio_bitrate": 96_000,
+            "format": "mp4", "format_names": "mov,mp4",
+        }
+
+        default = video._norm_assess(
+            source, "auto", 1080, 30, "h264", "aac", "mp4", False, 160_000
+        )
+        retained = video._norm_assess(
+            source, "auto", 1080, 30, "h264", "aac", "mp4", False, 160_000,
+            ("av1",)
+        )
+        self.assertFalse(default["compliant"])
+        self.assertTrue(retained["compliant"])
+
     def test_incomplete_normalise_cleans_partial_output_and_restores_original(self):
         loader = importlib.machinery.SourceFileLoader("video_cleanup_test", str(ROOT / "video"))
         spec = importlib.util.spec_from_loader(loader.name, loader)

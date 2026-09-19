@@ -265,6 +265,9 @@ target_height = 720
 target_fps    =
 # Force exact target height/FPS, including Lanczos upscaling of smaller video.
 force_normalise = false
+# Extra codecs which may be retained (rather than re-encoded as H.264) when
+# the video is otherwise within all normalise limits. AV1-in-MP4 is efficient.
+keep_video_codecs = av1
 # Maximum audio bitrate; compatible audio at or below it is stream-copied.
 audio_bitrate = 128k
 # Leave empty (or omit) to rename originals in place as FILE.orig.

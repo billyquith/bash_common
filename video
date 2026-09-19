@@ -121,6 +121,7 @@ BCCONFIG_SCHEMA = {
         ("target_height", "720",                  "Maximum height in pixels; taller videos are scaled down (aspect preserved) unless force_normalise is enabled"),
         ("target_fps",    "",                     "Maximum output frame rate (e.g. 30); higher rates are reduced, lower rates are preserved unless force_normalise is enabled"),
         ("video_codec",   "libx264",              "Video codec: libx264, libx265, libvpx-vp9"),
+        ("keep_video_codecs", "",                  "Additional input video codecs to retain when otherwise within limits (comma-separated ffprobe names, e.g. av1)"),
         ("audio_codec",   "aac",                  "Audio codec: aac, libmp3lame, libopus"),
         ("video_preset",  "slow",                 "Encoding speed/compression: ultrafast … veryslow"),
         ("video_crf",     "20",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
@@ -1338,7 +1339,8 @@ def _fmt_elapsed(secs):
 
 
 def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
-                 target_fmt, force_normalise=False, target_abitrate=None):
+                 target_fmt, force_normalise=False, target_abitrate=None,
+                 keep_vcodecs=()):
     """Compare *before* probe data against normalise targets.
 
     Returns a dict with compliant (bool), reasons (list[str]), and checks
@@ -1359,7 +1361,11 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
             needs_fps = float(before["fps"]) > target_fps + 0.01
         except (TypeError, ValueError):
             needs_fps = True
-    needs_vcodec = (before["video_codec"] != want_vc)
+    # The configured encoder's probe name is always accepted. Extra codecs
+    # are an explicit opt-in for efficient, playable sources such as AV1 in
+    # MP4; they are kept only while every other normalise limit is satisfied.
+    allowed_vcodecs = {want_vc, *keep_vcodecs}
+    needs_vcodec = before["video_codec"] not in allowed_vcodecs
     has_audio = bool(before["audio_codec"])
     needs_acodec = has_audio and before["audio_codec"] != want_ac
     needs_abitrate = bool(target_abitrate and before.get("audio_bitrate")
@@ -1395,7 +1401,7 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
             "label": "Video codec",
             "ok": not needs_vcodec,
             "current": before["video_codec"] or "—",
-            "target": want_vc,
+            "target": ", ".join(sorted(allowed_vcodecs)),
             "fix": f"re-encode video: {before['video_codec']} → {want_vc}",
         },
         {
@@ -1505,6 +1511,7 @@ def _run_info_section(run_info):
     cfg_rows = "".join([
         row("Target format",   run_info.get("target_fmt", "—")),
         row("Video codec",     run_info.get("vcodec", "—")),
+        row("Also retain video codecs", run_info.get("keep_vcodecs", "(target codec only)")),
         row("Audio codec",     run_info.get("acodec", "—")),
         row("CRF",             run_info.get("crf", "—")),
         row("Preset",          run_info.get("preset", "—")),
@@ -1947,6 +1954,11 @@ def cmd_normalise(args):
     target_fps  = _parse_target_fps(gcfg("target_fps", ""))
     target_fmt  = gcfg("format",         "mp4")
     vcodec      = gcfg("video_codec",    "libx264")
+    keep_vcodecs = tuple(
+        codec.strip().lower()
+        for codec in gcfg("keep_video_codecs", "").split(",")
+        if codec.strip()
+    )
     acodec      = gcfg("audio_codec",    "aac")
     preset      = gcfg("video_preset",   "slow")
     crf         = gcfg("video_crf",      "20")
@@ -1972,6 +1984,8 @@ def cmd_normalise(args):
     fps_str = (f"{target_fps:g} fps" if force_normalise else f"max {target_fps:g} fps") \
               if target_fps is not None else "source fps"
     target_str = f"{vcodec} {height_str} (auto-width), {fps_str} / {acodec} .{target_fmt}"
+    if keep_vcodecs:
+        target_str += f" · retain {', '.join(keep_vcodecs)}"
     if preset_name:
         target_str += f" · preset {preset_name}"
 
@@ -1983,6 +1997,7 @@ def cmd_normalise(args):
     run_info = {
         "target_fmt":     target_fmt,
         "vcodec":         vcodec,
+        "keep_vcodecs":   ", ".join(keep_vcodecs) or "(target codec only)",
         "acodec":         acodec,
         "crf":            crf,
         "preset":         preset,
@@ -2023,7 +2038,7 @@ def cmd_normalise(args):
                     continue
                 assess = _norm_assess(before, deinterlace, target_h, target_fps,
                                       want_vc, want_ac, target_fmt, force_normalise,
-                                      target_abitrate)
+                                      target_abitrate, keep_vcodecs)
                 tag = "[ok]" if assess["compliant"] else "[change]"
                 detail = "" if assess["compliant"] else f"  ({', '.join(assess['reasons'])})"
                 print(f"  {tag:<9} {rel_path}{detail}")
@@ -2085,7 +2100,7 @@ def cmd_normalise(args):
 
             assess = _norm_assess(before, deinterlace, target_h, target_fps,
                                   want_vc, want_ac, target_fmt, force_normalise,
-                                  target_abitrate)
+                                  target_abitrate, keep_vcodecs)
             fail_count = sum(1 for c in assess["checks"] if not c["ok"])
             candidates.append({
                 "fail_count": fail_count, "size": before["size"],
