@@ -140,6 +140,29 @@ class MetadataTests(unittest.TestCase):
         self.assertIn("scale 640×480→h=1080", forced["reasons"])
         self.assertIn("fps 24→30", forced["reasons"])
 
+    def test_video_normalise_copies_audio_under_bitrate_ceiling(self):
+        loader = importlib.machinery.SourceFileLoader("video_audio_test", str(ROOT / "video"))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        video = importlib.util.module_from_spec(spec)
+        loader.exec_module(video)
+        source = {
+            "interlaced": False, "height": 720, "width": 1280, "fps": "30",
+            "video_codec": "h264", "audio_codec": "aac", "audio_bitrate": 96_000,
+            "format": "mp4", "format_names": "mov,mp4",
+        }
+
+        under_limit = video._norm_assess(
+            source, "auto", 1080, 30, "h264", "aac", "mp4", False, 160_000
+        )
+        self.assertTrue(under_limit["compliant"])
+
+        source["audio_bitrate"] = 192_000
+        over_limit = video._norm_assess(
+            source, "auto", 1080, 30, "h264", "aac", "mp4", False, 160_000
+        )
+        self.assertFalse(over_limit["compliant"])
+        self.assertIn("clamp audio 192 kb/s→≤160 kb/s", over_limit["reasons"])
+
     def test_incomplete_normalise_cleans_partial_output_and_restores_original(self):
         loader = importlib.machinery.SourceFileLoader("video_cleanup_test", str(ROOT / "video"))
         spec = importlib.util.spec_from_loader(loader.name, loader)

@@ -124,7 +124,7 @@ BCCONFIG_SCHEMA = {
         ("audio_codec",   "aac",                  "Audio codec: aac, libmp3lame, libopus"),
         ("video_preset",  "slow",                 "Encoding speed/compression: ultrafast … veryslow"),
         ("video_crf",     "20",                   "Quality (lower = better): libx264 18–28, libx265 24–28"),
-        ("audio_bitrate", "160k",                 "Audio bitrate (e.g. 128k, 192k, 256k)"),
+        ("audio_bitrate", "160k",                 "Maximum audio bitrate; compatible audio at or below it is stream-copied (e.g. 128k, 192k, 256k)"),
         ("original_dir",  "", "Empty: rename originals in place as FILE.orig (same disk, no copy). Set a path to move originals there — useful when that disk is an HDD and you want to free SSD space."),
         ("delete_originals", "false",            "Delete a newly-created original backup only after a successful, verified conversion"),
         ("force_normalise", "false",             "Always re-encode and apply target height/FPS exactly, including upscaling smaller video"),
@@ -1280,6 +1280,23 @@ def _parse_target_fps(value):
     return fps
 
 
+def _parse_bitrate(value, name):
+    """Parse an ffmpeg-style bitrate such as 160k or 1.5M into bits/second."""
+    value = str(value).strip().lower()
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([kmg]?)", value)
+    if not match:
+        sys.exit(f"Error: {name} must be a bitrate such as 160k or 1M, got {value!r}")
+    multiplier = {"": 1, "k": 1_000, "m": 1_000_000, "g": 1_000_000_000}[match.group(2)]
+    return int(float(match.group(1)) * multiplier)
+
+
+def _fmt_bitrate(bps):
+    """Format a bitrate in a compact human-readable form."""
+    if bps >= 1_000_000:
+        return f"{bps / 1_000_000:.1f}".rstrip("0").rstrip(".") + " Mb/s"
+    return f"{bps / 1_000:.0f} kb/s"
+
+
 def _parse_bool(value, name):
     """Parse a config boolean with an actionable error for invalid values."""
     value = str(value).strip().lower()
@@ -1321,7 +1338,7 @@ def _fmt_elapsed(secs):
 
 
 def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
-                 target_fmt, force_normalise=False):
+                 target_fmt, force_normalise=False, target_abitrate=None):
     """Compare *before* probe data against normalise targets.
 
     Returns a dict with compliant (bool), reasons (list[str]), and checks
@@ -1343,7 +1360,11 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
         except (TypeError, ValueError):
             needs_fps = True
     needs_vcodec = (before["video_codec"] != want_vc)
-    needs_acodec = (before["audio_codec"] != want_ac)
+    has_audio = bool(before["audio_codec"])
+    needs_acodec = has_audio and before["audio_codec"] != want_ac
+    needs_abitrate = bool(target_abitrate and before.get("audio_bitrate")
+                          and before["audio_bitrate"] > target_abitrate)
+    needs_audio = needs_acodec or needs_abitrate
     # Use the full comma-separated format_names string for detection so that a
     # file reported as "mov,mp4,m4a,…" by ffprobe is not falsely flagged as
     # needing conversion when the target is already "mp4".
@@ -1352,6 +1373,17 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
     res_current = f'{before["width"]}×{before["height"]}' if before["width"] else "—"
     res_target  = f"h={target_h}" if force_normalise else f"≤ h={target_h}"
     fps_target  = f"{target_fps:g}" if target_fps is not None else "source"
+    audio_current = before["audio_codec"] or "no audio"
+    if before.get("audio_bitrate"):
+        audio_current += f" · {_fmt_bitrate(before['audio_bitrate'])}"
+    audio_target = want_ac
+    if target_abitrate:
+        audio_target += f" ≤ {_fmt_bitrate(target_abitrate)}"
+    audio_fixes = []
+    if needs_acodec:
+        audio_fixes.append(f"codec {before['audio_codec']} → {want_ac}")
+    if needs_abitrate:
+        audio_fixes.append(f"reduce bitrate to ≤ {_fmt_bitrate(target_abitrate)}")
     scale_fix = (f"scale to h={target_h} with Lanczos (width auto from aspect): {res_current}"
                  if force_normalise else
                  f"scale down to h={target_h} (width auto from aspect): {res_current}")
@@ -1367,11 +1399,11 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
             "fix": f"re-encode video: {before['video_codec']} → {want_vc}",
         },
         {
-            "label": "Audio codec",
-            "ok": not needs_acodec,
-            "current": before["audio_codec"] or "—",
-            "target": want_ac,
-            "fix": f"re-encode audio: {before['audio_codec'] or 'none'} → {want_ac}",
+            "label": "Audio",
+            "ok": not needs_audio,
+            "current": audio_current,
+            "target": audio_target,
+            "fix": "re-encode audio: " + "; ".join(audio_fixes),
         },
         {
             "label": "Resolution",
@@ -1408,6 +1440,8 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
         reasons.append(f"vcodec {before['video_codec']}→{want_vc}")
     if needs_acodec:
         reasons.append(f"acodec {before['audio_codec'] or 'none'}→{want_ac}")
+    if needs_abitrate:
+        reasons.append(f"clamp audio { _fmt_bitrate(before['audio_bitrate']) }→≤{_fmt_bitrate(target_abitrate)}")
     if needs_scale:
         action = "scale" if force_normalise else "scale down"
         reasons.append(f"{action} {res_current}→{res_target}")
@@ -1422,7 +1456,7 @@ def _norm_assess(before, deinterlace, target_h, target_fps, want_vc, want_ac,
     if force_normalise:
         reasons.append("forced normalisation")
     compliant = not force_normalise and not any([
-        needs_vcodec, needs_acodec, needs_scale, needs_fps, needs_fmt, needs_deint
+        needs_vcodec, needs_audio, needs_scale, needs_fps, needs_fmt, needs_deint
     ])
     return {"compliant": compliant, "reasons": reasons, "checks": checks}
 
@@ -1432,7 +1466,7 @@ def _norm_probe(path):
     e = {
         "size": 0, "format": "", "format_names": "", "duration": 0.0, "bitrate": 0,
         "video_codec": "", "width": 0, "height": 0, "fps": "",
-        "audio_codec": "", "channels": "", "interlaced": False,
+        "audio_codec": "", "audio_bitrate": 0, "channels": "", "interlaced": False,
     }
     try:
         e["size"] = os.path.getsize(path)
@@ -1453,6 +1487,7 @@ def _norm_probe(path):
                 e["interlaced"]  = _is_interlaced(s)
             elif ctype == "audio" and not e["audio_codec"]:
                 e["audio_codec"] = s.get("codec_name", "")
+                e["audio_bitrate"] = int(s.get("bit_rate") or 0)
                 e["channels"]    = s.get("channels", "")
     except Exception:
         pass
@@ -1652,7 +1687,7 @@ def _normalise_plan_html(directory, entries, target, run_info=None):
       <th>File</th>
       <th>Size / duration</th>
       <th>Video codec</th>
-      <th>Audio codec</th>
+      <th>Audio</th>
       <th>Resolution</th>
       <th>Frame rate</th>
       <th>Container</th>
@@ -1916,6 +1951,7 @@ def cmd_normalise(args):
     preset      = gcfg("video_preset",   "slow")
     crf         = gcfg("video_crf",      "20")
     abitrate    = gcfg("audio_bitrate",  "160k")
+    target_abitrate = _parse_bitrate(abitrate, "video.normalise audio_bitrate")
     deinterlace = gcfg("deinterlace",    "auto").lower()
     force_normalise = args.force or _parse_bool(
         gcfg("force_normalise", "false"),
@@ -1986,7 +2022,8 @@ def cmd_normalise(args):
                                       "error": "probe failed or no video stream"})
                     continue
                 assess = _norm_assess(before, deinterlace, target_h, target_fps,
-                                      want_vc, want_ac, target_fmt, force_normalise)
+                                      want_vc, want_ac, target_fmt, force_normalise,
+                                      target_abitrate)
                 tag = "[ok]" if assess["compliant"] else "[change]"
                 detail = "" if assess["compliant"] else f"  ({', '.join(assess['reasons'])})"
                 print(f"  {tag:<9} {rel_path}{detail}")
@@ -2047,7 +2084,8 @@ def cmd_normalise(args):
                 continue
 
             assess = _norm_assess(before, deinterlace, target_h, target_fps,
-                                  want_vc, want_ac, target_fmt, force_normalise)
+                                  want_vc, want_ac, target_fmt, force_normalise,
+                                  target_abitrate)
             fail_count = sum(1 for c in assess["checks"] if not c["ok"])
             candidates.append({
                 "fail_count": fail_count, "size": before["size"],
@@ -2109,13 +2147,14 @@ def cmd_normalise(args):
                             for chk in assess["checks"])
             needs_vcodec_enc = any(chk["label"] == "Video codec" and not chk["ok"]
                                    for chk in assess["checks"])
-            needs_acodec_enc = any(chk["label"] == "Audio codec" and not chk["ok"]
-                                   for chk in assess["checks"])
+            needs_audio_enc = force_normalise or any(
+                chk["label"] == "Audio" and not chk["ok"] for chk in assess["checks"]
+            )
 
             # Stream copy (remux) when only the container format differs —
             # all streams are already the right codec and resolution.
             # This is lossless and takes seconds instead of minutes.
-            remux_only = not any([needs_vcodec_enc, needs_acodec_enc,
+            remux_only = not any([needs_vcodec_enc, needs_audio_enc,
                                   needs_scale, needs_fps, needs_deint, force_normalise])
 
             # ffmpeg cannot write to its input; use a sibling temp then replace.
@@ -2146,8 +2185,13 @@ def cmd_normalise(args):
                 cmd = ["ffmpeg", "-i", source_path]
                 if vf_parts:
                     cmd += ["-vf", ",".join(vf_parts)]
-                cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset,
-                        "-acodec", acodec, "-b:a", abitrate, encode_dest]
+                cmd += ["-vcodec", vcodec, "-crf", crf, "-preset", preset]
+                if before["audio_codec"]:
+                    if needs_audio_enc:
+                        cmd += ["-acodec", acodec, "-b:a", abitrate]
+                    else:
+                        cmd += ["-acodec", "copy"]
+                cmd.append(encode_dest)
 
             t0 = time.monotonic()
             _run(cmd)

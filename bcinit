@@ -366,6 +366,7 @@ audio_codec   = aac
 # Encoding quality and speed (see [video.convert] section for details).
 video_preset  = medium
 video_crf     = 23
+# Maximum audio bitrate. Audio already at or below this value is stream-copied.
 audio_bitrate = 128k
 
 # Where to put originals before transcoding.

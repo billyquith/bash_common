@@ -265,6 +265,8 @@ target_height = 720
 target_fps    =
 # Force exact target height/FPS, including Lanczos upscaling of smaller video.
 force_normalise = false
+# Maximum audio bitrate; compatible audio at or below it is stream-copied.
+audio_bitrate = 128k
 # Leave empty (or omit) to rename originals in place as FILE.orig.
 # Set a path to move originals there — e.g. an HDD, to free SSD space.
 original_dir  =
